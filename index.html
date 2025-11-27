@@ -17,11 +17,11 @@
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
 
     <style>
-        /* Estilos específicos para Impressão A4 */
+        /* Estilos Impressão A4 */
         @media print {
             @page { size: A4; margin: 10mm; }
             body { background-color: white; -webkit-print-color-adjust: exact; }
-            #sidebar, #mobile-menu-btn, .no-print { display: none !important; }
+            #sidebar, #mobile-menu-btn, .no-print, #login-screen { display: none !important; }
             #main-container { margin-left: 0 !important; width: 100% !important; padding: 0 !important; }
             #app-content { padding: 0 !important; }
             .print-only { display: block !important; }
@@ -31,13 +31,10 @@
         }
         
         .print-only { display: none; }
-        
-        /* Scrollbar personalizada */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
+        
         .loader {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #3b82f6;
@@ -51,774 +48,885 @@
 </head>
 <body class="bg-gray-100 font-sans text-gray-800 h-screen flex overflow-hidden">
 
-    <!-- Sidebar Navegação -->
-    <aside id="sidebar" class="bg-slate-800 text-white w-64 flex-shrink-0 hidden md:flex flex-col transition-all duration-300">
+    <!-- LOGIN SCREEN (Admin) -->
+    <div id="login-screen" class="fixed inset-0 bg-slate-900 z-50 hidden flex flex-col justify-center items-center text-white">
+        <div class="bg-white text-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-md">
+            <div class="text-center mb-6">
+                <i class="fa-solid fa-lock text-4xl text-blue-600 mb-2"></i>
+                <h2 class="text-2xl font-bold">Acesso Gestor</h2>
+                <p class="text-sm text-gray-500">Sistema de RH & Ponto</p>
+            </div>
+            <form id="form-login" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium">Usuário</label>
+                    <input type="text" id="login-user" class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500" placeholder="admin">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Senha</label>
+                    <input type="password" id="login-pass" class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500" placeholder="******">
+                </div>
+                <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition font-bold">ENTRAR</button>
+            </form>
+            <p id="login-msg" class="mt-4 text-center text-sm text-red-500 hidden"></p>
+        </div>
+        <p class="mt-4 text-gray-500 text-xs">Acesso restrito a pessoal autorizado.</p>
+    </div>
+
+    <!-- SIDEBAR (Admin Only) -->
+    <aside id="sidebar" class="bg-slate-800 text-white w-64 flex-shrink-0 hidden flex-col transition-all duration-300 shadow-xl z-20">
         <div class="p-4 border-b border-slate-700 flex items-center gap-3">
-            <i class="fa-solid fa-clock text-2xl text-blue-400"></i>
-            <h1 class="font-bold text-lg">RH System</h1>
+            <i class="fa-solid fa-user-tie text-2xl text-blue-400"></i>
+            <div>
+                <h1 class="font-bold text-lg leading-tight">Gestão RH</h1>
+                <p class="text-xs text-slate-400" id="current-manager-name">Admin</p>
+            </div>
         </div>
         <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
             <button onclick="router('dashboard')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-700 transition flex items-center gap-3">
-                <i class="fa-solid fa-chart-line w-5"></i> Dashboard/Alertas
-            </button>
-            <button onclick="router('ponto')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-700 transition flex items-center gap-3">
-                <i class="fa-solid fa-fingerprint w-5"></i> Bater Ponto
+                <i class="fa-solid fa-chart-line w-5"></i> Dashboard
             </button>
             <button onclick="router('rh')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-700 transition flex items-center gap-3">
-                <i class="fa-solid fa-users w-5"></i> Gestão RH
+                <i class="fa-solid fa-users w-5"></i> Colaboradores
             </button>
             <button onclick="router('relatorios')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-700 transition flex items-center gap-3">
                 <i class="fa-solid fa-file-pdf w-5"></i> Relatórios
             </button>
             <button onclick="router('config')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-700 transition flex items-center gap-3">
-                <i class="fa-solid fa-cog w-5"></i> Configurações
+                <i class="fa-solid fa-cogs w-5"></i> Config & Gestores
+            </button>
+            <button onclick="router('link-ponto')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-700 transition flex items-center gap-3 text-blue-300">
+                <i class="fa-solid fa-link w-5"></i> Link do Ponto
             </button>
         </nav>
-        <div class="p-4 border-t border-slate-700 text-xs text-slate-400">
-            v1.0.0 - Single File App
+        <div class="p-4 border-t border-slate-700">
+            <button onclick="logout()" class="w-full text-left px-4 py-2 rounded text-red-400 hover:bg-slate-700 flex items-center gap-2">
+                <i class="fa-solid fa-sign-out-alt"></i> Sair
+            </button>
         </div>
     </aside>
 
-    <!-- Conteúdo Principal -->
+    <!-- CONTEÚDO PRINCIPAL -->
     <main id="main-container" class="flex-1 flex flex-col h-full overflow-hidden w-full relative">
-        <!-- Header Mobile -->
-        <header class="md:hidden bg-slate-800 text-white p-4 flex justify-between items-center z-10">
+        <!-- Header Mobile (Admin Only) -->
+        <header id="mobile-header" class="hidden md:hidden bg-slate-800 text-white p-4 justify-between items-center z-10 shadow">
             <h1 class="font-bold">RH System</h1>
             <button id="mobile-menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
         </header>
 
-        <!-- Área de Conteúdo Dinâmico -->
-        <div id="app-content" class="flex-1 overflow-y-auto p-4 md:p-8 relative">
-            <!-- O conteúdo será injetado aqui pelo JavaScript -->
+        <!-- Área Dinâmica -->
+        <div id="app-content" class="flex-1 overflow-y-auto p-4 md:p-8 relative bg-gray-100">
             <div class="flex justify-center items-center h-full">
                 <div class="text-center">
                     <div class="loader mx-auto mb-4"></div>
-                    <p class="text-gray-500">Inicializando sistema...</p>
+                    <p class="text-gray-500">Carregando sistema...</p>
                 </div>
             </div>
         </div>
     </main>
 
-    <!-- Modal Universal -->
+    <!-- MODAL -->
     <div id="modal-overlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex justify-center items-center backdrop-blur-sm p-4">
-        <div id="modal-content" class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto transform transition-all scale-100">
-            <!-- Conteúdo do modal -->
-        </div>
+        <div id="modal-content" class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto transform transition-all scale-100"></div>
     </div>
 
-    <!-- Scripts da Aplicação -->
+    <!-- JAVASCRIPT APP -->
     <script type="module">
-        // --- 1. CONFIGURAÇÃO FIREBASE E VARIÁVEIS GLOBAIS ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, orderBy, where, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Variáveis de ambiente injetadas ou padrão
-        const firebaseConfig = {apiKey: "AIzaSyBLxhi9yn506R-kjlOoMz7R_i7C7c5iRjs",
-                                authDomain: "apprh-db10f.firebaseapp.com",
-                                projectId: "apprh-db10f",
-                                storageBucket: "apprh-db10f.firebasestorage.app",
-                                messagingSenderId: "1086403355974",
-                                appId: "1:1086403355974:web:9b31c7cc2f5d4411a27147",
-                                measurementId: "G-2L7PFCGDRM"
-                                };
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'demo-rh-system';
+        // --- CONFIGURAÇÃO ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBLxhi9yn506R-kjlOoMz7R_i7C7c5iRjs",
+            authDomain: "apprh-db10f.firebaseapp.com",
+            projectId: "apprh-db10f",
+            storageBucket: "apprh-db10f.firebasestorage.app",
+            messagingSenderId: "1086403355974",
+            appId: "1:1086403355974:web:9b31c7cc2f5d4411a27147",
+            measurementId: "G-2L7PFCGDRM"
+            };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'rh-system-v2';
         
-        // Inicialização
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
         // Estado Global
-        let currentUser = null;
         let companyConfig = {};
         let employees = [];
-        let currentView = 'dashboard';
+        let managers = [];
+        let currentManager = null;
+        let isKioskMode = false;
 
-        // --- 2. AUTH E INICIALIZAÇÃO ---
-        
+        // Path Helper
+        const getColl = (col) => collection(db, 'artifacts', appId, 'public', 'data', col);
+
+        // --- INICIALIZAÇÃO ---
         async function initApp() {
-            try {
-                // Auth
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+            // Verificar Modo (Admin vs Ponto)
+            const urlParams = new URLSearchParams(window.location.search);
+            isKioskMode = urlParams.get('mode') === 'ponto';
 
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        currentUser = user;
-                        await loadCompanyConfig();
-                        await loadEmployees();
-                        router('dashboard'); // Inicia no Dashboard
-                    }
-                });
-            } catch (error) {
-                console.error("Erro na inicialização:", error);
-                document.getElementById('app-content').innerHTML = `<div class="text-red-500 text-center mt-10">Erro ao conectar ao banco de dados.<br>${error.message}</div>`;
-            }
-        }
-
-        // --- 3. FUNÇÕES DE BANCO DE DADOS (Helpers) ---
-
-        // Caminho Seguro (Rule 1 Compliance)
-        const getColl = (colName) => collection(db, 'artifacts', appId, 'public', 'data', colName);
-
-        async function loadCompanyConfig() {
-            const querySnapshot = await getDocs(getColl('config'));
-            if (!querySnapshot.empty) {
-                companyConfig = querySnapshot.docs[0].data();
-                companyConfig.id = querySnapshot.docs[0].id; // Salva o ID para update
+            // Auth Anônima para Conexão ao DB
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
             } else {
-                // Configuração Padrão
-                companyConfig = {
-                    nome: "Minha Empresa LTDA",
-                    cnpj: "00.000.000/0001-91",
-                    endereco: "Rua Exemplo, 123, Centro",
-                    logoUrl: "https://via.placeholder.com/150?text=LOGO"
-                };
+                await signInAnonymously(auth);
             }
-        }
 
-        async function loadEmployees() {
-            const q = query(getColl('employees')); // No complex sorting here per Rule 2, sort in JS
-            const querySnapshot = await getDocs(q);
-            employees = [];
-            querySnapshot.forEach((doc) => {
-                employees.push({ id: doc.id, ...doc.data() });
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    await loadConfig();
+                    if (isKioskMode) {
+                        // Modo Kiosk: Renderiza direto o ponto, sem login admin
+                        renderPonto(document.getElementById('app-content'));
+                    } else {
+                        // Modo Admin: Mostra Login
+                        checkAdminExists(); // Seed se necessário
+                        showLoginScreen();
+                    }
+                }
             });
-            // Ordenação local
-            employees.sort((a, b) => a.nomeCompleto.localeCompare(b.nomeCompleto));
         }
 
-        // --- 4. ROTEAMENTO E RENDERIZAÇÃO ---
-
-        window.router = async (viewName) => {
-            currentView = viewName;
-            const contentDiv = document.getElementById('app-content');
-            
-            // Highlight Menu
-            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('bg-slate-700', 'border-l-4', 'border-blue-400'));
-            // Adiciona highlight (simplificado para demo)
-            
-            contentDiv.innerHTML = '<div class="flex justify-center mt-10"><div class="loader"></div></div>';
-
-            switch (viewName) {
-                case 'config': renderConfig(contentDiv); break;
-                case 'rh': await renderRH(contentDiv); break;
-                case 'ponto': await renderPonto(contentDiv); break;
-                case 'dashboard': await renderDashboard(contentDiv); break;
-                case 'relatorios': await renderRelatorios(contentDiv); break;
+        // --- GESTÃO DE ACESSO (Login Admin) ---
+        async function checkAdminExists() {
+            const snap = await getDocs(getColl('managers'));
+            if (snap.empty) {
+                // Criar Super Admin Padrão
+                await addDoc(getColl('managers'), {
+                    user: 'admin',
+                    pass: '123456', // Em prod usar hash
+                    name: 'Super Admin',
+                    role: 'super_admin'
+                });
+                console.log("Super Admin criado: admin / 123456");
             }
+        }
+
+        function showLoginScreen() {
+            document.getElementById('login-screen').classList.remove('hidden');
+            document.getElementById('login-screen').classList.add('flex');
             
-            // Fecha menu mobile se aberto
+            document.getElementById('form-login').onsubmit = async (e) => {
+                e.preventDefault();
+                const u = document.getElementById('login-user').value;
+                const p = document.getElementById('login-pass').value;
+                const msg = document.getElementById('login-msg');
+
+                msg.classList.add('hidden');
+                
+                // Login Simples (Query no Firestore - Demo)
+                const q = query(getColl('managers'), where('user', '==', u), where('pass', '==', p));
+                const snap = await getDocs(q);
+
+                if (!snap.empty) {
+                    currentManager = { id: snap.docs[0].id, ...snap.docs[0].data() };
+                    document.getElementById('current-manager-name').innerText = currentManager.name;
+                    document.getElementById('login-screen').classList.add('hidden');
+                    document.getElementById('sidebar').classList.remove('hidden');
+                    document.getElementById('sidebar').classList.add('flex');
+                    document.getElementById('mobile-header').classList.remove('hidden');
+                    document.getElementById('mobile-header').classList.add('flex');
+                    router('dashboard');
+                } else {
+                    msg.innerText = "Usuário ou senha inválidos.";
+                    msg.classList.remove('hidden');
+                }
+            };
+        }
+
+        window.logout = () => {
+            currentManager = null;
+            window.location.reload();
+        };
+
+        async function loadConfig() {
+            const snap = await getDocs(getColl('config'));
+            if (!snap.empty) companyConfig = { id: snap.docs[0].id, ...snap.docs[0].data() };
+            else companyConfig = { nome: "Empresa Demo", cnpj: "", logoUrl: "https://via.placeholder.com/150" };
+        }
+
+        // --- ROTEAMENTO ---
+        window.router = async (view) => {
+            const container = document.getElementById('app-content');
+            container.innerHTML = '<div class="flex justify-center mt-10"><div class="loader"></div></div>';
+            
+            // Highlight nav
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('bg-slate-700', 'border-l-4', 'border-blue-400'));
+            
+            // Close mobile menu
             if(window.innerWidth < 768) document.getElementById('sidebar').classList.add('hidden');
+
+            switch(view) {
+                case 'dashboard': await renderDashboard(container); break;
+                case 'rh': await renderRH(container); break;
+                case 'relatorios': await renderRelatorios(container); break;
+                case 'config': await renderConfig(container); break;
+                case 'link-ponto': renderLinkPonto(container); break;
+            }
         };
 
         window.toggleSidebar = () => {
             const sb = document.getElementById('sidebar');
             sb.classList.toggle('hidden');
             sb.classList.toggle('absolute');
-            sb.classList.toggle('z-50');
             sb.classList.toggle('h-full');
+            sb.classList.toggle('z-50');
         };
 
-        // --- 5. MÓDULOS ---
+        // --- MÓDULO PONTO (KIOSK - ISOLADO) ---
+        async function renderPonto(container) {
+            // Remove margens e paddings do main container para ficar full screen
+            document.getElementById('main-container').className = "w-full h-full bg-slate-900 flex items-center justify-center p-4";
+            
+            const snap = await getDocs(getColl('employees'));
+            employees = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b) => a.nomeCompleto.localeCompare(b.nomeCompleto));
 
-        // === MÓDULO CONFIGURAÇÃO ===
-        function renderConfig(container) {
             container.innerHTML = `
-                <div class="max-w-4xl mx-auto bg-white p-6 rounded shadow">
-                    <h2 class="text-2xl font-bold mb-6 text-slate-800 border-b pb-2">Configurações da Empresa</h2>
-                    <form id="form-config" class="space-y-4">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Nome da Empresa</label>
-                                <input type="text" id="conf-nome" value="${companyConfig.nome || ''}" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">CNPJ</label>
-                                <input type="text" id="conf-cnpj" value="${companyConfig.cnpj || ''}" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                            </div>
-                            <div class="md:col-span-2">
-                                <label class="block text-sm font-medium text-gray-700">Endereço Completo</label>
-                                <input type="text" id="conf-endereco" value="${companyConfig.endereco || ''}" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                            </div>
-                            <div class="md:col-span-2">
-                                <label class="block text-sm font-medium text-gray-700">URL da Logomarca</label>
-                                <input type="text" id="conf-logo" value="${companyConfig.logoUrl || ''}" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                                <p class="text-xs text-gray-500 mt-1">Insira uma URL de imagem pública.</p>
-                                <img src="${companyConfig.logoUrl || ''}" class="h-16 mt-2 object-contain border p-1" onerror="this.style.display='none'">
-                            </div>
+                <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+                    <div class="bg-blue-800 p-6 text-white text-center relative overflow-hidden">
+                        <div class="absolute top-0 left-0 w-full h-full bg-blue-600 opacity-20 transform -skew-y-6 origin-top-left"></div>
+                        <img src="${companyConfig.logoUrl}" class="h-16 mx-auto mb-3 bg-white p-2 rounded shadow relative z-10" onerror="this.style.display='none'">
+                        <h2 class="text-2xl font-bold relative z-10">${companyConfig.nome}</h2>
+                        <p class="opacity-80 relative z-10 text-sm">Registro de Ponto Eletrônico</p>
+                    </div>
+                    
+                    <div class="p-8">
+                        <div class="text-center mb-8">
+                            <div id="relogio" class="text-4xl font-mono text-slate-700 font-bold tracking-widest">--:--:--</div>
+                            <div id="data" class="text-gray-500 uppercase text-xs font-bold mt-1">--</div>
                         </div>
-                        <div class="flex justify-end pt-4">
-                            <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 shadow flex items-center gap-2">
-                                <i class="fa-solid fa-save"></i> Salvar Configurações
+
+                        <label class="block text-sm font-bold text-gray-700 mb-2">Colaborador</label>
+                        <select id="ponto-user" class="w-full text-lg border-2 border-gray-300 rounded-lg p-3 focus:border-blue-500 outline-none transition-colors bg-gray-50 mb-6">
+                            <option value="">Selecione seu nome...</option>
+                            ${employees.map(e => `<option value="${e.id}">${e.nomeCompleto}</option>`).join('')}
+                        </select>
+
+                        <div id="ponto-actions" class="hidden animate-fade-in-up">
+                            <div class="bg-blue-50 border border-blue-200 rounded p-3 mb-6 text-center text-sm text-blue-800">
+                                Status Atual: <span id="last-status" class="font-bold">...</span>
+                            </div>
+                            
+                            <button id="btn-ponto" class="w-full py-4 rounded-xl text-white text-xl font-bold shadow-lg transform transition hover:scale-105 active:scale-95 flex items-center justify-center gap-3">
+                                <span>REGISTRAR</span>
                             </button>
+                            
+                            <div class="mt-4 text-center text-xs text-gray-400 flex justify-center gap-4">
+                                <span><i class="fa-solid fa-location-dot"></i> GPS Ativo</span>
+                                <span><i class="fa-solid fa-camera"></i> Foto Simulada</span>
+                            </div>
                         </div>
-                    </form>
+                    </div>
                 </div>
             `;
 
-            document.getElementById('form-config').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const newData = {
-                    nome: document.getElementById('conf-nome').value,
-                    cnpj: document.getElementById('conf-cnpj').value,
-                    endereco: document.getElementById('conf-endereco').value,
-                    logoUrl: document.getElementById('conf-logo').value
-                };
-                
-                try {
-                    if (companyConfig.id) {
-                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', companyConfig.id), newData);
-                    } else {
-                        await addDoc(getColl('config'), newData);
-                    }
-                    companyConfig = { ...newData, id: companyConfig.id };
-                    alert('Configurações salvas!');
-                    router('config');
-                } catch (err) {
-                    console.error(err);
-                    alert('Erro ao salvar.');
+            setInterval(() => {
+                const now = new Date();
+                const elR = document.getElementById('relogio');
+                if(elR) {
+                    elR.innerText = now.toLocaleTimeString('pt-BR');
+                    document.getElementById('data').innerText = now.toLocaleDateString('pt-BR', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
                 }
+            }, 1000);
+
+            const select = document.getElementById('ponto-user');
+            select.addEventListener('change', async (e) => {
+                const uid = e.target.value;
+                const area = document.getElementById('ponto-actions');
+                
+                if(!uid) { area.classList.add('hidden'); return; }
+                
+                // Buscar status
+                const q = query(getColl('registros_ponto')); 
+                const snap = await getDocs(q);
+                // Filtro em memória por limitação do Firestore query composto sem index
+                const today = new Date(); today.setHours(0,0,0,0);
+                const userRecs = snap.docs.map(d=>d.data())
+                    .filter(d => d.userId === uid && d.timestamp.toDate() >= today)
+                    .sort((a,b) => a.timestamp.toDate() - b.timestamp.toDate());
+
+                const last = userRecs.length ? userRecs[userRecs.length-1].tipo : null;
+                
+                // Máquina de Estados
+                let next = 'Entrada';
+                let color = 'bg-green-600 hover:bg-green-500';
+                let icon = '<i class="fa-solid fa-sun"></i>';
+                
+                if(last === 'Entrada') { next = 'Saída Almoço'; color = 'bg-yellow-600 hover:bg-yellow-500'; icon = '<i class="fa-solid fa-utensils"></i>'; }
+                else if(last === 'Saída Almoço') { next = 'Volta Almoço'; color = 'bg-orange-600 hover:bg-orange-500'; icon = '<i class="fa-solid fa-briefcase"></i>'; }
+                else if(last === 'Volta Almoço') { next = 'Saída'; color = 'bg-red-600 hover:bg-red-500'; icon = '<i class="fa-solid fa-home"></i>'; }
+                else if(last === 'Saída') { next = 'Hora Extra'; color = 'bg-purple-600 hover:bg-purple-500'; icon = '<i class="fa-solid fa-plus-circle"></i>'; }
+
+                document.getElementById('last-status').innerText = last || 'Sem registro hoje';
+                const btn = document.getElementById('btn-ponto');
+                btn.className = `w-full py-4 rounded-xl text-white text-xl font-bold shadow-lg transform transition hover:scale-105 active:scale-95 flex items-center justify-center gap-3 ${color}`;
+                btn.innerHTML = `${icon} <span>Registrar ${next}</span>`;
+                
+                btn.onclick = async () => {
+                    btn.disabled = true;
+                    btn.innerHTML = '<div class="loader w-6 h-6 border-white"></div>';
+                    await addDoc(getColl('registros_ponto'), {
+                        userId: uid,
+                        tipo: next,
+                        timestamp: serverTimestamp(),
+                        geo: "-23.5505,-46.6333", // Mock
+                        foto: true
+                    });
+                    alert('Ponto registrado com sucesso!');
+                    select.value = "";
+                    select.dispatchEvent(new Event('change'));
+                };
+
+                area.classList.remove('hidden');
             });
         }
 
-        // === MÓDULO RH (COLABORADORES) ===
+        // --- GESTÃO DE COLABORADORES (Admin) ---
         async function renderRH(container) {
-            await loadEmployees(); // Refresh data
-            
-            const rows = employees.map(emp => `
-                <tr class="hover:bg-gray-50">
-                    <td class="p-3 border-b">${emp.nomeCompleto}</td>
-                    <td class="p-3 border-b hidden sm:table-cell">${emp.cpf}</td>
-                    <td class="p-3 border-b hidden md:table-cell">${emp.cargo || 'Não inf.'}</td>
-                    <td class="p-3 border-b text-center">
-                        <button onclick="openEmployeeModal('${emp.id}')" class="text-blue-600 hover:text-blue-800 mx-1"><i class="fa-solid fa-edit"></i></button>
-                        <button onclick="deleteEmployee('${emp.id}')" class="text-red-600 hover:text-red-800 mx-1"><i class="fa-solid fa-trash"></i></button>
+            const snap = await getDocs(getColl('employees'));
+            employees = snap.docs.map(d => ({id:d.id, ...d.data()}));
+            renderTableRH(container, employees);
+        }
+
+        function renderTableRH(container, data) {
+            // Filtros e Lista
+            const rows = data.map(e => `
+                <tr class="hover:bg-gray-50 border-b">
+                    <td class="p-3 font-medium">${e.nomeCompleto}</td>
+                    <td class="p-3 text-gray-500">${e.estado || '-'}</td>
+                    <td class="p-3 hidden sm:table-cell">${e.cargo}</td>
+                    <td class="p-3 text-center">
+                        <button onclick="editEmp('${e.id}')" class="text-blue-600 hover:bg-blue-100 p-2 rounded"><i class="fa-solid fa-pen"></i></button>
+                        <button onclick="delEmp('${e.id}')" class="text-red-600 hover:bg-red-100 p-2 rounded"><i class="fa-solid fa-trash"></i></button>
                     </td>
                 </tr>
             `).join('');
 
             container.innerHTML = `
-                <div class="bg-white rounded shadow p-6">
-                    <div class="flex justify-between items-center mb-6">
+                <div class="bg-white rounded-lg shadow-sm p-6">
+                    <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                         <h2 class="text-2xl font-bold text-slate-800">Colaboradores</h2>
-                        <button onclick="openEmployeeModal()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 shadow flex items-center gap-2">
-                            <i class="fa-solid fa-plus"></i> Novo Colaborador
+                        <button onclick="editEmp()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 shadow flex items-center gap-2">
+                            <i class="fa-solid fa-plus"></i> Novo Cadastro
                         </button>
                     </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-sm text-gray-600">
-                            <thead class="bg-gray-100 uppercase font-medium">
+                    
+                    <!-- Filtros -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 bg-gray-50 p-4 rounded">
+                        <input id="search-name" placeholder="Buscar por Nome..." class="border p-2 rounded w-full" onkeyup="filterRH()">
+                        <select id="search-uf" class="border p-2 rounded w-full" onchange="filterRH()">
+                            <option value="">Todos os Estados</option>
+                            <option value="SP">SP</option><option value="RJ">RJ</option><option value="MG">MG</option>
+                            <option value="RS">RS</option><option value="PR">PR</option><option value="SC">SC</option>
+                            <!-- Adicionar outros conforme necessidade -->
+                        </select>
+                    </div>
+
+                    <div class="overflow-x-auto rounded border">
+                        <table class="w-full text-left text-sm" id="table-rh">
+                            <thead class="bg-gray-100 uppercase text-xs font-bold text-gray-600">
                                 <tr>
-                                    <th class="p-3 border-b">Nome</th>
-                                    <th class="p-3 border-b hidden sm:table-cell">CPF</th>
-                                    <th class="p-3 border-b hidden md:table-cell">Cargo</th>
-                                    <th class="p-3 border-b text-center">Ações</th>
+                                    <th class="p-3">Nome</th>
+                                    <th class="p-3">UF</th>
+                                    <th class="p-3 hidden sm:table-cell">Cargo</th>
+                                    <th class="p-3 text-center w-24">Ações</th>
                                 </tr>
                             </thead>
-                            <tbody>${rows.length ? rows : '<tr><td colspan="4" class="p-4 text-center">Nenhum colaborador cadastrado.</td></tr>'}</tbody>
+                            <tbody>${rows || '<tr><td colspan="4" class="p-6 text-center text-gray-500">Nenhum registro encontrado.</td></tr>'}</tbody>
                         </table>
                     </div>
                 </div>
             `;
         }
 
-        window.openEmployeeModal = (id = null) => {
-            const emp = id ? employees.find(e => e.id === id) : {};
+        window.filterRH = () => {
+            const name = document.getElementById('search-name').value.toLowerCase();
+            const uf = document.getElementById('search-uf').value;
+            const filtered = employees.filter(e => 
+                e.nomeCompleto.toLowerCase().includes(name) && 
+                (uf === "" || e.estado === uf)
+            );
+            // Re-render apenas o TBODY seria melhor, mas aqui re-renderizo tudo por simplicidade do SPA
+            // Hack rápido: Manipular DOM direto na tabela existente
+            const tbody = document.querySelector('#table-rh tbody');
+            tbody.innerHTML = filtered.map(e => `
+                <tr class="hover:bg-gray-50 border-b">
+                    <td class="p-3 font-medium">${e.nomeCompleto}</td>
+                    <td class="p-3 text-gray-500">${e.estado || '-'}</td>
+                    <td class="p-3 hidden sm:table-cell">${e.cargo}</td>
+                    <td class="p-3 text-center">
+                        <button onclick="editEmp('${e.id}')" class="text-blue-600 hover:bg-blue-100 p-2 rounded"><i class="fa-solid fa-pen"></i></button>
+                        <button onclick="delEmp('${e.id}')" class="text-red-600 hover:bg-red-100 p-2 rounded"><i class="fa-solid fa-trash"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+        };
+
+        window.editEmp = (id) => {
+            const e = id ? employees.find(x => x.id === id) : {};
             const modal = document.getElementById('modal-content');
-            
             modal.innerHTML = `
                 <div class="p-6">
-                    <h3 class="text-xl font-bold mb-4">${id ? 'Editar' : 'Novo'} Colaborador</h3>
-                    <form id="form-employee" class="space-y-3">
-                        <input type="hidden" id="emp-id" value="${id || ''}">
-                        
-                        <!-- Dados Pessoais -->
-                        <h4 class="font-semibold text-blue-600 border-b pb-1">Dados Pessoais</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <input required placeholder="Nome Completo" class="border p-2 rounded w-full" id="emp-nome" value="${emp.nomeCompleto || ''}">
-                            <input placeholder="CPF" class="border p-2 rounded w-full" id="emp-cpf" value="${emp.cpf || ''}">
-                            <input placeholder="PIS/NIS" class="border p-2 rounded w-full" id="emp-pis" value="${emp.nisPIS || ''}">
-                            <input placeholder="RG" class="border p-2 rounded w-full" id="emp-rg" value="${emp.rg || ''}">
-                            <input type="date" placeholder="Data Nascimento" class="border p-2 rounded w-full" id="emp-nasc" value="${emp.dataNascimento || ''}">
-                            <input placeholder="Cargo/Função" class="border p-2 rounded w-full" id="emp-cargo" value="${emp.cargo || ''}">
-                        </div>
-                        <input placeholder="Endereço Completo" class="border p-2 rounded w-full" id="emp-end" value="${emp.endereco || ''}">
-
-                        <!-- Jornada -->
-                        <h4 class="font-semibold text-blue-600 border-b pb-1 mt-2">Jornada</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <div>
-                                <label class="text-xs">Horas/Dia</label>
-                                <input type="number" class="border p-2 rounded w-full" id="emp-horas" value="${emp.horasDia || 8}">
-                            </div>
+                    <h3 class="text-xl font-bold mb-4 border-b pb-2">${id ? 'Editar' : 'Novo'} Colaborador</h3>
+                    <form id="form-emp" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div class="md:col-span-2">
-                                <label class="text-xs">Horários Padrão (Texto)</label>
-                                <input placeholder="Ex: 08:00-12:00, 13:00-17:00" class="border p-2 rounded w-full" id="emp-padrao" value="${emp.horariosPadrao || ''}">
+                                <label class="text-xs font-bold text-gray-500 uppercase">Nome Completo</label>
+                                <input required id="e-nome" value="${e.nomeCompleto||''}" class="w-full border p-2 rounded">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 uppercase">CPF</label>
+                                <input id="e-cpf" value="${e.cpf||''}" class="w-full border p-2 rounded">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 uppercase">Estado (UF)</label>
+                                <select id="e-uf" class="w-full border p-2 rounded">
+                                    <option value="">Selecione</option>
+                                    <option value="SP" ${e.estado==='SP'?'selected':''}>SP</option>
+                                    <option value="RJ" ${e.estado==='RJ'?'selected':''}>RJ</option>
+                                    <option value="MG" ${e.estado==='MG'?'selected':''}>MG</option>
+                                    <option value="RS" ${e.estado==='RS'?'selected':''}>RS</option>
+                                    <!-- Outros... -->
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 uppercase">Cargo</label>
+                                <input id="e-cargo" value="${e.cargo||''}" class="w-full border p-2 rounded">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 uppercase">Jornada Diária (HH:mm)</label>
+                                <input type="time" id="e-jornada" value="${e.jornadaHHMM||'08:00'}" class="w-full border p-2 rounded font-mono">
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4 bg-blue-50 p-4 rounded">
+                            <h4 class="font-bold text-sm text-blue-800 mb-2">Dados de Férias</h4>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="text-xs">Data Admissão</label>
+                                    <input type="date" id="e-admissao" value="${e.feriasDataAdmissao||''}" class="w-full border p-2 rounded">
+                                </div>
+                                <div>
+                                    <label class="text-xs">Próximo Início</label>
+                                    <input type="date" id="e-ferias" value="${e.feriasProximaDataInicio||''}" class="w-full border p-2 rounded">
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Férias -->
-                        <h4 class="font-semibold text-blue-600 border-b pb-1 mt-2">Férias</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
-                                <label class="text-xs">Data Admissão</label>
-                                <input type="date" class="border p-2 rounded w-full" id="emp-admissao" value="${emp.feriasDataAdmissao || ''}">
-                            </div>
-                            <div>
-                                <label class="text-xs">Próximo Início Férias</label>
-                                <input type="date" class="border p-2 rounded w-full" id="emp-proxferias" value="${emp.feriasProximaDataInicio || ''}">
-                            </div>
-                        </div>
-
-                        <div class="flex justify-end gap-2 mt-6">
+                        <div class="flex justify-end gap-2 pt-4">
                             <button type="button" onclick="closeModal()" class="bg-gray-300 px-4 py-2 rounded">Cancelar</button>
                             <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded">Salvar</button>
                         </div>
                     </form>
                 </div>
             `;
-
             document.getElementById('modal-overlay').classList.remove('hidden');
-            
-            document.getElementById('form-employee').onsubmit = async (e) => {
-                e.preventDefault();
-                const data = {
-                    nomeCompleto: document.getElementById('emp-nome').value,
-                    cpf: document.getElementById('emp-cpf').value,
-                    nisPIS: document.getElementById('emp-pis').value,
-                    rg: document.getElementById('emp-rg').value,
-                    dataNascimento: document.getElementById('emp-nasc').value,
-                    cargo: document.getElementById('emp-cargo').value,
-                    endereco: document.getElementById('emp-end').value,
-                    horasDia: parseFloat(document.getElementById('emp-horas').value),
-                    horariosPadrao: document.getElementById('emp-padrao').value,
-                    feriasDataAdmissao: document.getElementById('emp-admissao').value,
-                    feriasProximaDataInicio: document.getElementById('emp-proxferias').value,
-                };
 
-                const editId = document.getElementById('emp-id').value;
+            document.getElementById('form-emp').onsubmit = async (evt) => {
+                evt.preventDefault();
+                const data = {
+                    nomeCompleto: document.getElementById('e-nome').value,
+                    cpf: document.getElementById('e-cpf').value,
+                    estado: document.getElementById('e-uf').value,
+                    cargo: document.getElementById('e-cargo').value,
+                    jornadaHHMM: document.getElementById('e-jornada').value,
+                    feriasDataAdmissao: document.getElementById('e-admissao').value,
+                    feriasProximaDataInicio: document.getElementById('e-ferias').value
+                };
+                
                 try {
-                    if(editId) {
-                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', editId), data);
-                    } else {
-                        await addDoc(getColl('employees'), data);
-                    }
+                    if(id) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', id), data);
+                    else await addDoc(getColl('employees'), data);
                     closeModal();
                     router('rh');
-                } catch(err) {
-                    console.error(err);
-                    alert('Erro ao salvar colaborador.');
-                }
+                } catch(err) { alert('Erro ao salvar'); console.error(err); }
             };
         };
-
-        window.deleteEmployee = async (id) => {
-            if(confirm('Tem certeza? Isso não apaga os pontos batidos, apenas o cadastro.')) {
+        
+        window.delEmp = async (id) => {
+            if(confirm('Tem certeza?')) {
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', id));
                 router('rh');
             }
         };
 
-        // === MÓDULO PONTO (Simulação Embed) ===
-        
-        async function renderPonto(container) {
-            await loadEmployees();
+        // --- DASHBOARD (Com Filtros) ---
+        async function renderDashboard(container) {
+            // Recarregar emps
+            const snapE = await getDocs(getColl('employees'));
+            employees = snapE.docs.map(d => ({id:d.id, ...d.data()}));
             
             container.innerHTML = `
-                <div class="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden border border-slate-200">
-                    <div class="bg-slate-800 p-4 text-white text-center">
-                        <img src="${companyConfig.logoUrl || ''}" class="h-10 mx-auto mb-2 object-contain bg-white rounded p-1" onerror="this.style.display='none'">
-                        <h2 class="text-xl font-bold">Registro de Ponto</h2>
-                        <div id="relogio-digital" class="text-3xl font-mono mt-2 tracking-widest">--:--:--</div>
-                        <div id="data-hoje" class="text-sm opacity-80">--/--/----</div>
-                    </div>
-                    
-                    <div class="p-6">
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Identifique-se:</label>
-                        <select id="ponto-colaborador" class="w-full border p-3 rounded mb-6 bg-gray-50 text-lg">
-                            <option value="">-- Selecione seu nome --</option>
-                            ${employees.map(e => `<option value="${e.id}">${e.nomeCompleto}</option>`).join('')}
+                <div class="mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                    <h2 class="text-2xl font-bold text-slate-800">Dashboard de Alertas</h2>
+                    <div class="flex gap-2 w-full md:w-auto">
+                        <select id="dash-filter-uf" class="border p-2 rounded" onchange="updateDash()">
+                            <option value="">Todos UF</option>
+                            <option value="SP">SP</option><option value="RJ">RJ</option><option value="MG">MG</option>
                         </select>
-
-                        <div id="ponto-actions" class="text-center hidden">
-                            <div class="mb-4 text-gray-600 font-medium">
-                                Último registro: <span id="last-record-type" class="text-blue-600">Nenhum hoje</span>
-                            </div>
-                            
-                            <button id="btn-bater-ponto" class="w-48 h-48 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-2xl transition-all transform hover:scale-105 active:scale-95 flex flex-col items-center justify-center mx-auto border-8 border-blue-100">
-                                <i class="fa-solid fa-fingerprint text-5xl mb-2"></i>
-                                <span class="text-xl font-bold uppercase" id="btn-label">REGISTRAR</span>
-                            </button>
-
-                            <div class="mt-6 text-xs text-gray-400">
-                                <i class="fa-solid fa-location-dot"></i> Geolocalização Ativa<br>
-                                <i class="fa-solid fa-camera"></i> Captura de Rosto Simulada
-                            </div>
-                        </div>
+                        <input id="dash-filter-name" placeholder="Nome..." class="border p-2 rounded" onkeyup="updateDash()">
                     </div>
                 </div>
+                <div id="dash-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Cards via JS -->
+                </div>
             `;
-
-            // Relógio
-            setInterval(() => {
-                const now = new Date();
-                const elRel = document.getElementById('relogio-digital');
-                if(elRel) {
-                    elRel.innerText = now.toLocaleTimeString('pt-BR');
-                    document.getElementById('data-hoje').innerText = now.toLocaleDateString('pt-BR', {weekday:'long', day:'numeric', month:'long'});
-                }
-            }, 1000);
-
-            // Lógica do Fluxo
-            const select = document.getElementById('ponto-colaborador');
-            select.addEventListener('change', async (e) => {
-                const userId = e.target.value;
-                const actionsDiv = document.getElementById('ponto-actions');
-                
-                if(!userId) {
-                    actionsDiv.classList.add('hidden');
-                    return;
-                }
-                
-                actionsDiv.classList.remove('hidden');
-                actionsDiv.classList.add('opacity-50', 'pointer-events-none'); // Loading
-                
-                // Buscar pontos de hoje para determinar próximo estado
-                const today = new Date();
-                today.setHours(0,0,0,0);
-                
-                const q = query(getColl('registros_ponto')); // Filter in memory
-                const snap = await getDocs(q);
-                
-                // Filtrar na memória
-                const userPointsToday = snap.docs
-                    .map(d => d.data())
-                    .filter(d => d.userId === userId && d.timestamp.toDate() >= today)
-                    .sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
-
-                const last = userPointsToday.length > 0 ? userPointsToday[userPointsToday.length - 1].tipo : null;
-                
-                // Máquina de Estados
-                let nextType = 'Início Jornada';
-                let btnColor = 'bg-green-600';
-                
-                if (last === 'Início Jornada') { nextType = 'Início Almoço'; btnColor = 'bg-yellow-600'; }
-                else if (last === 'Início Almoço') { nextType = 'Retorno Almoço'; btnColor = 'bg-orange-600'; }
-                else if (last === 'Retorno Almoço') { nextType = 'Fim Jornada'; btnColor = 'bg-red-600'; }
-                else if (last === 'Fim Jornada') { nextType = 'Hora Extra/Outro'; btnColor = 'bg-purple-600'; }
-
-                const btn = document.getElementById('btn-bater-ponto');
-                document.getElementById('btn-label').innerText = nextType;
-                document.getElementById('last-record-type').innerText = last || 'Nenhum registro hoje';
-                
-                // Reset classes and add new color
-                btn.className = `w-48 h-48 rounded-full text-white shadow-2xl transition-all transform hover:scale-105 active:scale-95 flex flex-col items-center justify-center mx-auto border-8 border-gray-100 ${btnColor} hover:opacity-90`;
-
-                btn.onclick = () => baterPonto(userId, nextType);
-
-                actionsDiv.classList.remove('opacity-50', 'pointer-events-none');
-            });
+            updateDash();
         }
 
-        async function baterPonto(userId, tipo) {
-            // Mock Location
-            const mockGeo = "Lat: -23.5505, Long: -46.6333"; 
+        window.updateDash = () => {
+            const uf = document.getElementById('dash-filter-uf').value;
+            const name = document.getElementById('dash-filter-name').value.toLowerCase();
+            const container = document.getElementById('dash-cards');
             
-            try {
-                await addDoc(getColl('registros_ponto'), {
-                    userId,
-                    tipo,
-                    timestamp: serverTimestamp(),
-                    geolocalizacao: mockGeo,
-                    fotoCaptura: true
-                });
-                alert(`Ponto registrado: ${tipo}`);
-                // Refresh
-                document.getElementById('ponto-colaborador').dispatchEvent(new Event('change'));
-            } catch (e) {
-                console.error(e);
-                alert('Erro ao registrar ponto');
+            const filtered = employees.filter(e => 
+                (uf === "" || e.estado === uf) && 
+                e.nomeCompleto.toLowerCase().includes(name)
+            );
+
+            if(filtered.length === 0) {
+                container.innerHTML = '<p class="col-span-3 text-center text-gray-500">Nenhum colaborador encontrado.</p>';
+                return;
             }
-        }
 
-        // === MÓDULO ALERTAS/DASHBOARD ===
-        async function renderDashboard(container) {
-            await loadEmployees();
-            
-            // Buscar todos os pontos (Em app real, filtraria por mês)
-            const snap = await getDocs(getColl('registros_ponto'));
-            const allPoints = snap.docs.map(d => ({...d.data(), dateObj: d.data().timestamp.toDate()}));
-
-            // Lógica Simplificada de Cálculo de Horas (Apenas para demo)
-            // Agrupar por Usuario -> Dia
-            const reportData = {}; // { userId: { entries: [], ferias: date } }
-            
-            employees.forEach(emp => {
-                reportData[emp.id] = { 
-                    name: emp.nomeCompleto, 
-                    expected: emp.horasDia || 8,
-                    workedHours: 0,
-                    vacationWarning: false,
-                    daysMissing: 0
-                };
-                
-                // Alerta Férias (30 dias)
-                if(emp.feriasProximaDataInicio) {
-                    const today = new Date();
-                    const vacationDate = new Date(emp.feriasProximaDataInicio + "T00:00:00");
-                    const diffTime = vacationDate - today;
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-                    if(diffDays > 0 && diffDays <= 60) {
-                        reportData[emp.id].vacationWarning = `${diffDays} dias`;
+            container.innerHTML = filtered.map(e => {
+                // Lógica de Férias
+                let feriasMsg = "";
+                let feriasClass = "";
+                if(e.feriasProximaDataInicio) {
+                    const diff = Math.ceil((new Date(e.feriasProximaDataInicio) - new Date()) / (1000*60*60*24));
+                    if(diff > 0 && diff <= 60) {
+                        feriasMsg = `Férias em ${diff} dias`;
+                        feriasClass = "border-yellow-400 bg-yellow-50";
                     }
                 }
-            });
-
-            // Calcular horas simples (Total de Entrada/Saída pares)
-            // NOTA: Algoritmo simplificado. Pega 1º e Último do dia para estimativa grosseira no dashboard
-            
-            const htmlCards = Object.values(reportData).map(d => `
-                <div class="bg-white p-4 rounded shadow border-l-4 ${d.vacationWarning ? 'border-yellow-400' : 'border-blue-400'}">
-                    <h3 class="font-bold">${d.name}</h3>
-                    <div class="text-sm text-gray-600 mt-2">
-                        <p>Jornada: ${d.expected}h</p>
-                        ${d.vacationWarning ? `<p class="text-yellow-600 font-bold mt-1"><i class="fa-solid fa-plane"></i> Férias em ${d.vacationWarning}</p>` : ''}
+                
+                return `
+                    <div class="bg-white p-4 rounded shadow border-l-4 ${feriasClass || 'border-blue-500'}">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-bold text-lg">${e.nomeCompleto}</h3>
+                                <p class="text-xs text-gray-500">${e.cargo || 'Cargo n/a'} - ${e.estado || 'UF n/a'}</p>
+                            </div>
+                            ${feriasMsg ? '<i class="fa-solid fa-plane text-yellow-600"></i>' : ''}
+                        </div>
+                        <div class="mt-4 text-sm">
+                            <p>Jornada: <strong>${e.jornadaHHMM || '08:00'}</strong></p>
+                            ${feriasMsg ? `<p class="text-yellow-700 font-bold mt-2">${feriasMsg}</p>` : ''}
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
+        };
 
-            container.innerHTML = `
-                <h2 class="text-2xl font-bold mb-6 text-slate-800">Dashboard & Alertas</h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    ${htmlCards}
-                </div>
-                <div class="mt-6 bg-blue-50 p-4 rounded text-sm text-blue-800">
-                    <i class="fa-solid fa-info-circle"></i> O cálculo detalhado de saldo de horas por dia é realizado no momento da geração do Relatório Mensal para garantir precisão com as batidas de almoço.
-                </div>
-            `;
-        }
-
-        // === MÓDULO RELATÓRIOS (Impressão) ===
+        // --- RELATÓRIOS (Impressão + Conversão HH:mm) ---
         async function renderRelatorios(container) {
-            await loadEmployees();
-            
+            const snapE = await getDocs(getColl('employees'));
+            employees = snapE.docs.map(d => ({id:d.id, ...d.data()}));
+
             container.innerHTML = `
                 <div class="max-w-4xl mx-auto screen-only">
                     <div class="bg-white p-6 rounded shadow mb-6">
-                        <h2 class="text-2xl font-bold mb-4">Gerar Espelho de Ponto</h2>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <select id="rel-colaborador" class="border p-2 rounded">
-                                ${employees.map(e => `<option value="${e.id}">${e.nomeCompleto}</option>`).join('')}
-                            </select>
-                            <input type="month" id="rel-mes" class="border p-2 rounded" value="${new Date().toISOString().slice(0,7)}">
-                            <button onclick="gerarRelatorio()" class="bg-slate-800 text-white p-2 rounded hover:bg-slate-700">
-                                <i class="fa-solid fa-file-invoice"></i> Gerar Visualização
-                            </button>
+                        <h2 class="text-2xl font-bold mb-4">Emissão de Folha de Ponto</h2>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                             <!-- Filtros Auxiliares -->
+                             <select id="rel-filter-uf" class="border p-2 rounded text-sm bg-gray-50" onchange="updateRelSelect()">
+                                <option value="">Filtrar Estado (Todos)</option>
+                                <option value="SP">SP</option><option value="RJ">RJ</option>
+                             </select>
                         </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="md:col-span-2">
+                                <label class="block text-sm mb-1">Colaborador</label>
+                                <select id="rel-colaborador" class="w-full border p-2 rounded border-blue-300">
+                                    <!-- Options via JS -->
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm mb-1">Mês Referência</label>
+                                <input type="month" id="rel-mes" class="w-full border p-2 rounded" value="${new Date().toISOString().slice(0,7)}">
+                            </div>
+                        </div>
+                        <button onclick="gerarRelatorio()" class="mt-4 w-full bg-slate-800 text-white p-3 rounded hover:bg-slate-700 font-bold">
+                            <i class="fa-solid fa-file-invoice"></i> GERAR RELATÓRIO
+                        </button>
                     </div>
                 </div>
                 
-                <!-- Área do Relatório (Visível na tela e na impressão) -->
+                <!-- Área de Preview (A4) -->
                 <div id="relatorio-preview" class="hidden bg-white shadow-lg p-8 mx-auto max-w-[210mm] min-h-[297mm]">
-                    <!-- Cabeçalho -->
-                    <div class="flex justify-between items-start border-b-2 border-black pb-4 mb-4">
+                    <!-- Header da Folha -->
+                    <div class="flex justify-between items-center border-b-2 border-black pb-4 mb-4">
                         <div class="flex items-center gap-4">
-                            <img src="${companyConfig.logoUrl}" class="h-16 w-16 object-contain" onerror="this.style.display='none'">
+                            <img src="${companyConfig.logoUrl}" class="h-16 object-contain" onerror="this.style.display='none'">
                             <div>
-                                <h1 class="text-xl font-bold uppercase">${companyConfig.nome || 'EMPRESA'}</h1>
-                                <p class="text-xs">CNPJ: ${companyConfig.cnpj || ''}</p>
-                                <p class="text-xs">${companyConfig.endereco || ''}</p>
+                                <h1 class="text-xl font-bold uppercase">${companyConfig.nome}</h1>
+                                <p class="text-xs">CNPJ: ${companyConfig.cnpj}</p>
                             </div>
                         </div>
                         <div class="text-right">
                             <h2 class="text-lg font-bold">FOLHA DE PONTO</h2>
-                            <p class="text-sm" id="rel-periodo">MÊS/ANO</p>
+                            <p class="text-sm" id="rel-periodo-txt"></p>
                         </div>
                     </div>
-
-                    <!-- Dados Colaborador -->
-                    <div class="grid grid-cols-2 gap-2 text-sm mb-6 border p-2 bg-gray-50">
-                        <div><span class="font-bold">Colaborador:</span> <span id="rel-nome">Nome</span></div>
-                        <div><span class="font-bold">Cargo:</span> <span id="rel-cargo">Cargo</span></div>
-                        <div><span class="font-bold">CPF:</span> <span id="rel-cpf">000</span></div>
-                        <div><span class="font-bold">Jornada:</span> <span id="rel-jornada">08:00 - 18:00</span></div>
+                    
+                    <!-- Dados -->
+                    <div class="bg-gray-50 border p-2 text-sm grid grid-cols-2 gap-2 mb-4">
+                        <div><span class="font-bold">Nome:</span> <span id="rel-p-nome"></span></div>
+                        <div><span class="font-bold">Cargo:</span> <span id="rel-p-cargo"></span></div>
+                        <div><span class="font-bold">CPF:</span> <span id="rel-p-cpf"></span></div>
+                        <div><span class="font-bold">Carga Horária:</span> <span id="rel-p-jornada"></span></div>
                     </div>
 
                     <!-- Tabela -->
-                    <table class="w-full text-xs text-center border-collapse mb-6">
-                        <thead>
-                            <tr class="bg-gray-200">
-                                <th class="w-10">Dia</th>
-                                <th class="w-16">Entrada</th>
-                                <th class="w-16">Almoço</th>
-                                <th class="w-16">Volta</th>
-                                <th class="w-16">Saída</th>
-                                <th class="w-12">Total</th>
-                                <th class="w-12">Saldo</th>
-                                <th>Ocorrências</th>
+                    <table class="w-full text-xs text-center border mb-4">
+                        <thead class="bg-gray-200">
+                            <tr>
+                                <th>Dia</th><th>Entrada</th><th>Saída Almoço</th><th>Volta Almoço</th><th>Saída</th>
+                                <th>Total</th><th>Saldo</th><th>Obs</th>
                             </tr>
                         </thead>
-                        <tbody id="rel-tbody">
-                            <!-- Rows generated via JS -->
-                        </tbody>
+                        <tbody id="rel-tbody"></tbody>
                     </table>
 
                     <!-- Totais -->
-                    <div class="flex justify-end mb-12">
+                    <div class="flex justify-end mb-8">
                         <div class="border p-2 w-64 text-sm">
-                            <div class="flex justify-between"><span>Horas Previstas:</span> <span class="font-bold" id="total-previstas">00:00</span></div>
-                            <div class="flex justify-between"><span>Horas Trabalhadas:</span> <span class="font-bold" id="total-trabalhadas">00:00</span></div>
-                            <div class="flex justify-between border-t mt-1 pt-1"><span>Saldo Final:</span> <span class="font-bold text-lg" id="total-saldo">00:00</span></div>
+                            <div class="flex justify-between"><span>Previsto:</span> <span id="t-prev"></span></div>
+                            <div class="flex justify-between"><span>Realizado:</span> <span id="t-real"></span></div>
+                            <div class="flex justify-between font-bold border-t mt-1 pt-1"><span>Saldo:</span> <span id="t-saldo"></span></div>
                         </div>
                     </div>
 
                     <!-- Assinaturas -->
-                    <div class="flex justify-between mt-auto pt-10 text-center text-xs">
-                        <div class="w-1/3 border-t border-black pt-2">
-                            Assinatura do Colaborador
-                        </div>
-                        <div class="w-1/3 border-t border-black pt-2">
-                            ${companyConfig.nome} (RH/Gestor)
+                    <div class="flex justify-between mt-20 text-xs text-center">
+                        <div class="w-1/3 border-t border-black pt-2">Assinatura Colaborador</div>
+                        <div class="w-1/3 border-t border-black pt-2">Assinatura Gestor</div>
+                    </div>
+
+                    <div class="screen-only fixed bottom-8 right-8">
+                        <button onclick="window.print()" class="bg-blue-600 text-white p-4 rounded-full shadow-xl hover:bg-blue-700"><i class="fa-solid fa-print text-xl"></i></button>
+                    </div>
+                </div>
+            `;
+            updateRelSelect();
+        }
+
+        window.updateRelSelect = () => {
+            const uf = document.getElementById('rel-filter-uf')?.value || "";
+            const sel = document.getElementById('rel-colaborador');
+            if(!sel) return;
+            
+            const filtered = employees.filter(e => uf === "" || e.estado === uf);
+            sel.innerHTML = filtered.map(e => `<option value="${e.id}">${e.nomeCompleto}</option>`).join('');
+        };
+
+        window.gerarRelatorio = async () => {
+            const uid = document.getElementById('rel-colaborador').value;
+            const mesAno = document.getElementById('rel-mes').value;
+            
+            if(!uid) return alert('Selecione um colaborador');
+            
+            const emp = employees.find(e => e.id === uid);
+            const [year, month] = mesAno.split('-').map(Number);
+            const daysInMonth = new Date(year, month, 0).getDate();
+            
+            // Buscar Pontos
+            const q = query(getColl('registros_ponto'), where('userId', '==', uid));
+            const snap = await getDocs(q);
+            
+            // Filtrar e Organizar
+            const points = snap.docs.map(d => ({...d.data(), date: d.data().timestamp.toDate()}))
+                .filter(p => p.date.getMonth() === month-1 && p.date.getFullYear() === year)
+                .sort((a,b) => a.date - b.date);
+
+            // Converter Jornada HH:mm para minutos
+            const [h, m] = (emp.jornadaHHMM || "08:00").split(':').map(Number);
+            const dailyMinutesExpected = (h*60) + m;
+
+            let tbodyHtml = '';
+            let totalWorked = 0;
+            let totalExpected = 0;
+
+            for(let i=1; i<=daysInMonth; i++) {
+                const dia = new Date(year, month-1, i);
+                const isWeekend = dia.getDay() === 0 || dia.getDay() === 6;
+                const diaRecs = points.filter(p => p.date.getDate() === i);
+
+                // Helper Horário
+                const getH = (tipo) => {
+                    const r = diaRecs.find(x => x.tipo.includes(tipo));
+                    return r ? r.date.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) : '';
+                }
+
+                const e1 = getH('Entrada');
+                const s1 = getH('Saída Almoço');
+                const e2 = getH('Volta Almoço');
+                const s2 = getH('Saída');
+
+                // Cálculo Simplificado (Considera pares E1-S1 e E2-S2 ou E1-S2 direto se faltar almoço)
+                let minutes = 0;
+                if(diaRecs.length >= 2) {
+                    const first = diaRecs[0].date;
+                    const last = diaRecs[diaRecs.length-1].date;
+                    minutes = Math.floor((last - first) / 60000);
+                    // Se teve almoço, subtrai
+                    const pS1 = diaRecs.find(x => x.tipo.includes('Saída Almoço'));
+                    const pE2 = diaRecs.find(x => x.tipo.includes('Volta Almoço'));
+                    if(pS1 && pE2) {
+                        minutes -= Math.floor((pE2.date - pS1.date) / 60000);
+                    }
+                }
+
+                const exp = isWeekend ? 0 : dailyMinutesExpected;
+                totalWorked += minutes;
+                totalExpected += exp;
+                const bal = minutes - exp;
+
+                const fmt = (min) => {
+                    const abs = Math.abs(min);
+                    return `${Math.floor(abs/60).toString().padStart(2,'0')}:${(abs%60).toString().padStart(2,'0')}`;
+                }
+
+                tbodyHtml += `
+                    <tr class="${isWeekend ? 'bg-gray-100 text-gray-400' : ''}">
+                        <td>${i.toString().padStart(2,'0')}</td>
+                        <td>${e1}</td><td>${s1}</td><td>${e2}</td><td>${s2}</td>
+                        <td>${fmt(minutes)}</td>
+                        <td class="${bal < 0 ? 'text-red-600' : 'text-blue-600'} font-bold">${bal<0?'-':'+'}${fmt(bal)}</td>
+                        <td>${isWeekend ? 'DSR' : ''}</td>
+                    </tr>
+                `;
+            }
+
+            // Render Preview
+            document.getElementById('rel-periodo-txt').innerText = `${month}/${year}`;
+            document.getElementById('rel-p-nome').innerText = emp.nomeCompleto;
+            document.getElementById('rel-p-cargo').innerText = emp.cargo;
+            document.getElementById('rel-p-cpf').innerText = emp.cpf;
+            document.getElementById('rel-p-jornada').innerText = emp.jornadaHHMM;
+            document.getElementById('rel-tbody').innerHTML = tbodyHtml;
+            
+            const fmtT = (m) => `${Math.floor(Math.abs(m)/60)}:${(Math.abs(m)%60).toString().padStart(2,'0')}`;
+            document.getElementById('t-prev').innerText = fmtT(totalExpected);
+            document.getElementById('t-real').innerText = fmtT(totalWorked);
+            const finalBal = totalWorked - totalExpected;
+            document.getElementById('t-saldo').innerText = (finalBal>=0?'+':'-') + fmtT(finalBal);
+            document.getElementById('t-saldo').className = finalBal >= 0 ? 'text-blue-600 font-bold' : 'text-red-600 font-bold';
+
+            document.getElementById('relatorio-preview').classList.remove('hidden');
+        };
+
+        // --- CONFIGURAÇÕES & GESTORES ---
+        async function renderConfig(container) {
+            // Get managers
+            const snapM = await getDocs(getColl('managers'));
+            managers = snapM.docs.map(d => ({id:d.id, ...d.data()}));
+
+            container.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Config Empresa -->
+                    <div class="bg-white p-6 rounded shadow">
+                        <h3 class="font-bold text-lg mb-4 border-b pb-2">Dados da Empresa</h3>
+                        <div class="space-y-3">
+                            <input id="cfg-nome" value="${companyConfig.nome||''}" placeholder="Nome Empresa" class="w-full border p-2 rounded">
+                            <input id="cfg-cnpj" value="${companyConfig.cnpj||''}" placeholder="CNPJ" class="w-full border p-2 rounded">
+                            <input id="cfg-logo" value="${companyConfig.logoUrl||''}" placeholder="URL Logo" class="w-full border p-2 rounded">
+                            <button onclick="saveCfg()" class="bg-blue-600 text-white w-full py-2 rounded">Salvar Empresa</button>
                         </div>
                     </div>
 
-                    <!-- Botão Flutuante de Impressão (Tela apenas) -->
-                    <div class="fixed bottom-8 right-8 screen-only">
-                        <button onclick="window.print()" class="bg-blue-600 text-white rounded-full p-4 shadow-xl hover:bg-blue-700">
-                            <i class="fa-solid fa-print fa-lg"></i>
-                        </button>
+                    <!-- Gestores -->
+                    <div class="bg-white p-6 rounded shadow">
+                        <h3 class="font-bold text-lg mb-4 border-b pb-2">Gestores Cadastrados</h3>
+                        <ul class="space-y-2 mb-4 max-h-40 overflow-y-auto">
+                            ${managers.map(m => `
+                                <li class="flex justify-between items-center bg-gray-50 p-2 rounded text-sm">
+                                    <span><strong>${m.user}</strong> (${m.name})</span>
+                                    ${m.role === 'super_admin' ? '<span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">Super Admin</span>' : 
+                                    `<button onclick="delManager('${m.id}')" class="text-red-600"><i class="fa-solid fa-trash"></i></button>`}
+                                </li>
+                            `).join('')}
+                        </ul>
+                        <div class="border-t pt-4">
+                            <h4 class="text-sm font-bold mb-2">Novo Gestor</h4>
+                            <div class="grid grid-cols-2 gap-2 mb-2">
+                                <input id="new-m-user" placeholder="Usuário" class="border p-2 rounded text-sm">
+                                <input id="new-m-pass" placeholder="Senha" class="border p-2 rounded text-sm">
+                            </div>
+                            <input id="new-m-name" placeholder="Nome Completo" class="w-full border p-2 rounded text-sm mb-2">
+                            <button onclick="addManager()" class="bg-green-600 text-white w-full py-2 rounded text-sm">Adicionar Gestor</button>
+                        </div>
                     </div>
                 </div>
             `;
         }
 
-        window.gerarRelatorio = async () => {
-            const userId = document.getElementById('rel-colaborador').value;
-            const mesAno = document.getElementById('rel-mes').value; // YYYY-MM
-            if(!userId || !mesAno) return alert('Selecione colaborador e mês.');
+        window.saveCfg = async () => {
+            const data = {
+                nome: document.getElementById('cfg-nome').value,
+                cnpj: document.getElementById('cfg-cnpj').value,
+                logoUrl: document.getElementById('cfg-logo').value
+            };
+            if(companyConfig.id) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', companyConfig.id), data);
+            else await addDoc(getColl('config'), data);
+            alert('Salvo!'); loadConfig();
+        };
 
-            const [year, month] = mesAno.split('-').map(Number);
-            const emp = employees.find(e => e.id === userId);
-
-            // Fetch Points
-            const q = query(getColl('registros_ponto')); // Get all, filter later (simpler for this constrained demo)
-            const snap = await getDocs(q);
+        window.addManager = async () => {
+            const u = document.getElementById('new-m-user').value;
+            const p = document.getElementById('new-m-pass').value;
+            const n = document.getElementById('new-m-name').value;
+            if(!u || !p) return alert('Preencha usuario e senha');
             
-            const startDate = new Date(year, month - 1, 1);
-            const endDate = new Date(year, month, 0); // Last day of month
+            await addDoc(getColl('managers'), { user: u, pass: p, name: n, role: 'manager' });
+            renderConfig(document.getElementById('app-content'));
+        };
 
-            // Filtrar pontos do mês e usuário
-            const points = snap.docs
-                .map(d => ({ ...d.data(), date: d.data().timestamp.toDate() }))
-                .filter(p => p.userId === userId && p.date >= startDate && p.date <= endDate)
-                .sort((a,b) => a.date - b.date);
-
-            // Processar Tabela
-            const tbody = document.getElementById('rel-tbody');
-            tbody.innerHTML = '';
-            
-            let totalWorkedMinutes = 0;
-            let totalExpectedMinutes = 0;
-
-            const daysInMonth = endDate.getDate();
-            
-            for(let i = 1; i <= daysInMonth; i++) {
-                const currentDay = new Date(year, month - 1, i);
-                const dayPoints = points.filter(p => p.date.getDate() === i);
-                
-                // Formatar horários
-                const timeStr = (type) => {
-                    const p = dayPoints.find(dp => dp.tipo.includes(type));
-                    return p ? p.date.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) : '';
-                };
-                
-                const entrada = timeStr('Início Jornada');
-                const almoco = timeStr('Início Almoço');
-                const volta = timeStr('Retorno Almoço');
-                const saida = timeStr('Fim Jornada');
-
-                // Calcular horas trabalhadas (Lógica simplificada: (Saida - Entrada) - (Volta - Almoco))
-                // Para simplificar demo: Assume pares Entrada/Saida se existirem.
-                let workedMin = 0;
-                
-                // Se tiver pelo menos entrada e saída
-                if (dayPoints.length >= 2) {
-                    const first = dayPoints[0].date;
-                    const last = dayPoints[dayPoints.length-1].date;
-                    // Desconto básico de 1h se não tiver batida de almoço mas tiver intervalo grande, ou lógica exata
-                    const diffMs = last - first;
-                    workedMin = Math.floor(diffMs / 60000);
-                    
-                    // Se tiver almoço registrado, subtrair
-                    const pAlm = dayPoints.find(dp => dp.tipo.includes('Início Almoço'));
-                    const pVol = dayPoints.find(dp => dp.tipo.includes('Retorno Almoço'));
-                    if(pAlm && pVol) {
-                        workedMin -= Math.floor((pVol.date - pAlm.date) / 60000);
-                    }
-                }
-
-                // Fim de semana (Simples: Sab=6, Dom=0)
-                const isWeekend = currentDay.getDay() === 0 || currentDay.getDay() === 6;
-                const expectedMin = isWeekend ? 0 : (emp.horasDia || 8) * 60;
-                
-                totalWorkedMinutes += workedMin;
-                totalExpectedMinutes += expectedMin;
-
-                const balance = workedMin - expectedMin;
-                const balanceStr = (balance > 0 ? '+' : '') + Math.floor(balance/60) + ':' + Math.abs(balance%60).toString().padStart(2,'0');
-                
-                const rowClass = isWeekend ? 'bg-gray-100 text-gray-400' : '';
-                
-                const row = `
-                    <tr class="${rowClass}">
-                        <td>${i}/${month}</td>
-                        <td>${entrada}</td>
-                        <td>${almoco}</td>
-                        <td>${volta}</td>
-                        <td>${saida}</td>
-                        <td>${Math.floor(workedMin/60)}:${(workedMin%60).toString().padStart(2,'0')}</td>
-                        <td class="${balance < 0 ? 'text-red-600' : 'text-blue-600'} font-bold">${isWeekend ? '-' : balanceStr}</td>
-                        <td class="text-left px-2 italic text-gray-500">${isWeekend ? 'DSR/Folga' : ''}</td>
-                    </tr>
-                `;
-                tbody.innerHTML += row;
+        window.delManager = async (id) => {
+            if(confirm('Remover acesso deste gestor?')) {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'managers', id));
+                renderConfig(document.getElementById('app-content'));
             }
+        };
 
-            // Preencher Totais
-            const fmtTotal = (m) => Math.floor(m/60) + ':' + Math.abs(m%60).toString().padStart(2,'0');
-            document.getElementById('total-previstas').innerText = fmtTotal(totalExpectedMinutes);
-            document.getElementById('total-trabalhadas').innerText = fmtTotal(totalWorkedMinutes);
-            const finalBal = totalWorkedMinutes - totalExpectedMinutes;
-            document.getElementById('total-saldo').innerText = (finalBal > 0 ? '+' : '-') + fmtTotal(Math.abs(finalBal));
-            document.getElementById('total-saldo').className = `text-lg font-bold ${finalBal < 0 ? 'text-red-600' : 'text-blue-600'}`;
-
-            // Preencher Cabeçalho
-            document.getElementById('rel-periodo').innerText = `${month.toString().padStart(2,'0')}/${year}`;
-            document.getElementById('rel-nome').innerText = emp.nomeCompleto;
-            document.getElementById('rel-cargo').innerText = emp.cargo || '-';
-            document.getElementById('rel-cpf').innerText = emp.cpf || '-';
+        // --- LINK DE EMBED ---
+        window.renderLinkPonto = (container) => {
+            const url = window.location.href.split('?')[0] + '?mode=ponto';
+            const iframeCode = `<iframe src="${url}" style="width:100%; height:100%; border:none; min-height: 600px;"></iframe>`;
             
-            // Mostrar Preview
-            document.getElementById('relatorio-preview').classList.remove('hidden');
-        };
+            container.innerHTML = `
+                <div class="bg-white p-6 rounded shadow max-w-2xl mx-auto">
+                    <h2 class="text-2xl font-bold mb-4 text-blue-800"><i class="fa-solid fa-link"></i> Link do Ponto (Modo Quiosque)</h2>
+                    <p class="text-gray-600 mb-4">Use este link em tablets ou computadores dedicados para que os funcionários batam ponto sem acesso administrativo.</p>
+                    
+                    <div class="mb-4">
+                        <label class="font-bold text-sm">Link Direto:</label>
+                        <div class="flex gap-2">
+                            <input value="${url}" readonly class="w-full border p-2 bg-gray-100 rounded text-sm font-mono">
+                            <button onclick="navigator.clipboard.writeText('${url}')" class="bg-blue-600 text-white px-4 rounded hover:bg-blue-700">Copiar</button>
+                        </div>
+                    </div>
 
-        window.closeModal = () => {
-            document.getElementById('modal-overlay').classList.add('hidden');
-        };
-        
-        // Helper para fechar modal clicando fora
-        document.getElementById('modal-overlay').addEventListener('click', (e) => {
-            if (e.target.id === 'modal-overlay') window.closeModal();
-        });
+                    <div>
+                        <label class="font-bold text-sm">Código Iframe (Para Embed):</label>
+                        <div class="flex gap-2">
+                            <textarea readonly class="w-full border p-2 bg-gray-100 rounded text-sm font-mono h-24">${iframeCode}</textarea>
+                            <button onclick="navigator.clipboard.writeText(\`${iframeCode}\`)" class="bg-blue-600 text-white px-4 rounded hover:bg-blue-700 h-24">Copiar</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
 
-        // Iniciar
+        window.closeModal = () => document.getElementById('modal-overlay').classList.add('hidden');
+        document.getElementById('modal-overlay').addEventListener('click', (e) => { if(e.target.id === 'modal-overlay') window.closeModal() });
+
         initApp();
-
     </script>
 </body>
 </html>
