@@ -86,7 +86,15 @@
         import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // CONFIG
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const firebaseConfig = {
+  apiKey: "AIzaSyBLxhi9yn506R-kjlOoMz7R_i7C7c5iRjs",
+  authDomain: "apprh-db10f.firebaseapp.com",
+  projectId: "apprh-db10f",
+  storageBucket: "apprh-db10f.firebasestorage.app",
+  messagingSenderId: "1086403355974",
+  appId: "1:1086403355974:web:9b31c7cc2f5d4411a27147",
+  measurementId: "G-2L7PFCGDRM"
+};
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'rh-enterprise-v3';
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
