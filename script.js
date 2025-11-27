@@ -16,6 +16,8 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'rh-enterprise-v3';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+// CORREÇÃO ESSENCIAL: Garante que o nome da coleção é criado corretamente (ex: rh-enterprise-v3-admins)
 const getColl = (name) => collection(db, `${appId}-${name}`);
 
 // VARIAVEIS GLOBAIS
@@ -70,14 +72,20 @@ const loginUser = async () => {
     
     messageEl.textContent = 'Verificando credenciais...';
 
-    // 1. Geração do HASH
-    const hashedPass = getHash(pass);
+    // 1. Geração do HASH da senha digitada
+    const hashedPass = getHash(pass); // <-- ESSENCIAL
 
     let collName = role === 'admin' ? 'admins' : 'employees';
     
-    // 2. Consulta de Segurança (Busca por loginUser e hashedPass)
+    // 2. Consulta de Segurança (Busca por loginUser E hashedPass)
     try {
-        const q = query(getColl(collName), where('loginUser', '==', user));
+        // CORREÇÃO: Busca por usuário E senha com hash
+        // NOTA: Para o Admin funcionar, os campos no Firestore devem ser 'loginUser' e 'loginPass'
+        const q = query(
+            getColl(collName), 
+            where('loginUser', '==', user),
+            where('loginPass', '==', hashedPass) // <-- VALIDAÇÃO CRÍTICA DO HASH AQUI
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -85,19 +93,15 @@ const loginUser = async () => {
             return;
         }
 
+        // Se encontrou o documento, as credenciais são válidas.
         const userData = snapshot.docs[0].data();
         
-        // NOVO: Validação da senha com o hash armazenado
-        if (userData.loginPass === hashedPass) {
-            // Sucesso!
-            GLOBAL_USER_DATA = { id: snapshot.docs[0].id, ...userData };
-            GLOBAL_ROLE = role;
-            getEl('user-role-display').textContent = role === 'admin' ? 'Gestor' : 'Colaborador';
-            getEl('login-screen').classList.add('hidden');
-            router(role === 'admin' ? 'dashboard' : 'employee-history');
-        } else {
-            messageEl.textContent = 'Usuário ou senha inválidos.';
-        }
+        // Sucesso!
+        GLOBAL_USER_DATA = { id: snapshot.docs[0].id, ...userData };
+        GLOBAL_ROLE = role;
+        getEl('user-role-display').textContent = role === 'admin' ? 'Gestor' : 'Colaborador';
+        getEl('login-screen').classList.add('hidden');
+        router(role === 'admin' ? 'dashboard' : 'employee-history');
 
     } catch (error) {
         console.error("Erro no login:", error);
@@ -114,10 +118,6 @@ const checkAuth = async () => {
     } catch (e) {
         console.error("Erro na autenticação anônima:", e);
     }
-
-    // O código anterior forçava o login do admin se estivesse vazio.
-    // Agora, o sistema apenas exibe a tela de login.
-    // Se precisar forçar o ADMIN, execute loginUser() com as credenciais padrões.
 };
 
 const router = (route) => {
