@@ -1,13 +1,84 @@
+/* ==================================================================== */
+/* style.css - AJUSTES PARA MOBILE E IMPRESSÃO */
+/* ==================================================================== */
+
+/* Definições padrão (que podem ser usadas como classes Tailwind) */
+.loader { 
+    border: 3px solid #f3f3f3; 
+    border-top: 3px solid #3b82f6; 
+    border-radius: 50%; 
+    width: 24px; 
+    height: 24px; 
+    animation: spin 1s linear infinite; 
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Novo bloco de assinatura */
+.signature-block {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 30px; /* Espaçamento padrão */
+    width: 100%;
+}
+.signature-item {
+    text-align: center;
+    width: 45%; /* Define a largura para posicionar nas extremidades */
+}
+
+/* Estilos de Impressão (Criticamente importantes) */
 @media print {
-    @page { size: A4; margin: 10mm; }
-    body { background: white; -webkit-print-color-adjust: exact; }
-    #sidebar, #mobile-header, .no-print, #login-screen { display: none !important; }
-    #main-container { margin: 0 !important; width: 100% !important; padding: 0 !important; }
-    .print-only { display: block !important; }
-    table { width: 100%; border-collapse: collapse; font-size: 10px; }
-    th, td { border: 1px solid #000; padding: 3px; }
+    @page { 
+        size: A4; 
+        margin: 10mm; /* Margem da folha A4 */
+    }
     
-    /* Estilos do cabeçalho customizado para impressão */
+    body { 
+        background: white; 
+        -webkit-print-color-adjust: exact; 
+    }
+    
+    /* Ocultar elementos não imprimíveis */
+    #sidebar, #mobile-header, .no-print, #login-screen { 
+        display: none !important; 
+    }
+    
+    #main-container { 
+        margin: 0 !important; 
+        width: 100% !important; 
+        padding: 0 !important; 
+    }
+    
+    .print-only { 
+        display: block !important; 
+    }
+    
+    /* Tabela de Relatório */
+    table { 
+        width: 100%; 
+        border-collapse: collapse; 
+        font-size: 10px; 
+    }
+    th, td { 
+        border: 1px solid #000; 
+        padding: 3px; 
+    }
+    
+    /* Layout de Assinatura (Ajuste solicitado) */
+    .signature-block {
+        /* Garante que o alinhamento respeita as margens da página */
+        justify-content: space-between !important;
+        padding: 0 !important; 
+        margin-top: 25px !important;
+    }
+    .signature-item {
+        width: 45% !important; /* Força o posicionamento mais próximo das bordas */
+    }
+    
+    /* Estilos de Cabeçalho */
     .report-header-print {
         border-bottom: 2px solid #000;
         padding-bottom: 10px;
@@ -26,9 +97,3 @@
     }
 }
 .print-only { display: none; }
-.loader { border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-/* Custom Scroll */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #f1f1f1; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
