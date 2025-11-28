@@ -1,1538 +1,1700 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-import { getStorage, ref, uploadString, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-// --- CONFIGURAÇÃO E INICIALIZAÇÃO OBRIGATÓRIAS DO FIREBASE ---
+// CONFIG
+// *************************************************************************
+// ** ATUALIZE AS CHAVES ABAIXO COM AS SUAS CREDENCIAIS REAIS DO FIREBASE **
+// *************************************************************************
+const firebaseConfig = {
+  apiKey: "AIzaSyBLxhi9yn506R-kjlOoMz7R_i7C7c5iRjs",
+  authDomain: "apprh-db10f.firebaseapp.com",
+  projectId: "apprh-db10f",
+  storageBucket: "apprh-db10f.firebasestorage.app",
+  messagingSenderId: "1086403355974",
+  appId: "1:1086403355974:web:9b31c7cc2f5d4411a27147",
+  measurementId: "G-2L7PFCGDRM"
+};
+// *************************************************************************
 
-// Usa a configuração injetada pelo ambiente
-const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-// Usa o ID da aplicação injetado pelo ambiente
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'rh-enterprise-v3';
-// Token de autenticação customizado
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-if (Object.keys(firebaseConfig).length === 0) {
-    console.error("Erro: firebaseConfig não foi carregado. Verifique a variável global __firebase_config.");
-}
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const storage = getStorage(app);
-
-// Variáveis de estado global
-let isAuthReady = false;
-let isGuest = false;
-let isAuth = false;
-let isAdmin = false; // Controle de acesso Admin
-let currentUserId = 'anonymous';
-let currentEmployeeData = null; // Dados do colaborador logado
-
-// Função de utilidade para obter a referência da coleção com as regras de segurança do Canvas.
-const getColl = (collName, userId = currentUserId) => {
-    // Coleções consideradas Públicas/Compartilhadas para o sistema de RH (Configurações, Empregados, Pontos)
-    // Local: /artifacts/{appId}/public/data/{collName}
-    if (['config', 'cargos', 'estados', 'redes', 'lojas', 'feriados', 'employees', 'points', 'admins'].includes(collName)) {
-        return collection(db, `artifacts/${appId}/public/data/${collName}`);
-    }
-    // Coleções Privadas (apenas se houver dados estritamente privados do usuário)
-    // Local: /artifacts/{appId}/users/{userId}/{collName}
-    return collection(db, `artifacts/${appId}/public/data/${collName}`); // Mantendo tudo como público/compartilhado por padrão do sistema de RH
+const getColl = (collectionName) => {
+    const userId = auth.currentUser?.uid || 'anonymous';
+    // O sistema usa a estrutura privada /artifacts/{appId}/users/{userId}/{collectionName}
+    // Para coleções que não dependem do usuário (como 'employees', 'config', 'logs'),
+    // simplificamos para /artifacts/{appId}/public/data/{collectionName}
+    // Embora o README indique /artifacts/{appId}/users/{userId}/...
+    // Vamos usar a estrutura pública para dados globais/compartilhados:
+    const path = `/artifacts/${appId}/public/data/${collectionName}`;
+    return collection(db, path);
 };
 
-// Função para iniciar a autenticação (Custom Token ou Anônima)
-async function initializeAuth() {
-    try {
-        if (initialAuthToken) {
-            await signInWithCustomToken(auth, initialAuthToken);
-            console.log("Autenticação realizada com token customizado.");
-        } else {
-            await signInAnonymously(auth);
-            console.log("Autenticação realizada anonimamente.");
-        }
-    } catch (error) {
-        console.error("Erro na Inicialização da Autenticação:", error);
-    }
-}
 
-// Observador de estado de autenticação
-onAuthStateChanged(auth, async (user) => {
-    isAuthReady = true;
-    if (user) {
-        currentUserId = user.uid;
-        isAuth = true;
-        
-        // Verifica se é o admin padrão (para o primeiro acesso)
-        if (currentUserId === 'admin') {
-            isAdmin = true;
-            document.getElementById('login-screen').classList.add('hidden');
-            document.getElementById('sidebar').classList.remove('hidden');
-            await loadConfigAndRouter();
+/**
+ * Função principal de login do admin
+ * @param {string} user
+ * @param {string} pass
+ */
+async function login(user, pass) {
+    const form = document.getElementById('form-login');
+    const msg = document.getElementById('login-message');
+    msg.textContent = '';
+    const loginButton = document.querySelector('#form-login button[type="submit"]');
+
+    if (loginButton) {
+        loginButton.disabled = true;
+        loginButton.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Entrando...`;
+    }
+
+    try {
+        // 1. Tentar login admin/123456
+        if (user === 'admin' && pass === '123456') {
+            await signInAnonymously(auth);
+            await setupAndGoToDashboard();
             return;
         }
 
-        // Tenta carregar os dados do colaborador (employee)
+        // 2. Tentar login de colaborador (se não for admin)
         const employeesRef = getColl('employees');
-        const q = query(employeesRef, where('loginUser', '==', user.email || user.uid));
-        const employeeSnapshot = await getDocs(q);
+        const q = query(employeesRef, where('loginUser', '==', user), where('loginPass', '==', pass));
+        const querySnapshot = await getDocs(q);
 
-        if (!employeeSnapshot.empty) {
-            const employeeDoc = employeeSnapshot.docs[0];
-            currentEmployeeData = { id: employeeDoc.id, ...employeeDoc.data() };
-            isAdmin = false; // Não é admin
-            
-            // Verifica se tem permissão de Admin (caso o loginUser seja admin@admin.com, etc)
-            const adminDoc = await getDoc(doc(getColl('admins'), 'admin-user'));
-            const adminData = adminDoc.exists() ? adminDoc.data() : {};
-            if (currentEmployeeData.loginUser === adminData.user && currentEmployeeData.loginPass === adminData.pass) {
-                isAdmin = true;
-            }
-
-            document.getElementById('login-screen').classList.add('hidden');
-            if (isAdmin) {
-                document.getElementById('sidebar').classList.remove('hidden');
-            } else {
-                document.getElementById('sidebar').classList.add('hidden');
-            }
-
-            // Exibe o nome do colaborador na interface
-            document.getElementById('user-name-display').textContent = isAdmin ? 'Admin' : currentEmployeeData.nomeCompleto;
-            await loadConfigAndRouter();
-
-        } else {
-            // Logged in via Custom Token, but not an Admin or Employee
-            isAuth = false;
-            isAdmin = false;
-            currentEmployeeData = null;
-            document.getElementById('login-screen').classList.remove('hidden');
-            document.getElementById('sidebar').classList.add('hidden');
-            router('login');
+        if (querySnapshot.empty) {
+            msg.textContent = 'Usuário ou senha inválidos.';
+            return;
         }
 
+        const employeeDoc = querySnapshot.docs[0];
+        const employeeData = employeeDoc.data();
+
+        // Faz o login com a credencial específica do colaborador (poderia ser anônimo
+        // ou criar um token customizado. Por simplicidade, vamos usar anônimo aqui)
+        await signInAnonymously(auth);
+
+        // Armazena o ID do funcionário logado no localStorage (não ideal, mas mantendo a lógica de SPA)
+        localStorage.setItem('employeeId', employeeDoc.id);
+
+        await setupAndGoToDashboard();
+
+    } catch (error) {
+        console.error("Erro no login:", error);
+        msg.textContent = `Erro ao tentar conectar: ${error.message}`;
+        if (loginButton) {
+            loginButton.disabled = false;
+            loginButton.innerHTML = `Entrar`;
+        }
+    } finally {
+        if (loginButton) {
+            loginButton.disabled = false;
+            loginButton.innerHTML = `Entrar`;
+        }
+    }
+}
+
+/**
+ * Funções de controle de UI
+ */
+const appContent = document.getElementById('app-content');
+
+// Estado da aplicação (rotas)
+let currentView = 'dashboard';
+let isAuthenticated = false;
+let globalConfig = {}; // Armazena a configuração geral (cargos, feriados, etc.)
+let currentEmployeeId = null;
+
+// Função para exibir modal customizado (em vez de alert/confirm)
+function showModal(title, body, type = 'info', onConfirm = null, showCancel = false) {
+    const modalOverlay = document.getElementById('modal-overlay');
+    const modalTitle = document.getElementById('modal-title');
+    const modalBody = document.getElementById('modal-body');
+    const modalConfirmBtn = document.getElementById('modal-confirm');
+    const modalCancelBtn = document.getElementById('modal-cancel');
+
+    modalTitle.textContent = title;
+    modalBody.innerHTML = body;
+
+    // Configura o botão de confirmação
+    modalConfirmBtn.onclick = () => {
+        if (onConfirm) onConfirm();
+        modalOverlay.classList.add('hidden');
+    };
+
+    // Configura o botão de cancelamento
+    if (showCancel) {
+        modalCancelBtn.classList.remove('hidden');
+        modalCancelBtn.onclick = () => {
+            modalOverlay.classList.add('hidden');
+        };
     } else {
-        // Usuário deslogado (anônimo ou após signOut)
-        isAuth = false;
-        isAdmin = false;
-        currentEmployeeData = null;
-        document.getElementById('sidebar').classList.add('hidden');
-        // Se a rota for pública, continua; senão, mostra login
-        const currentRoute = window.location.hash.substring(1);
-        if (['ponto', 'autocadastro'].includes(currentRoute)) {
-            await loadConfigAndRouter();
-        } else {
-            router('login');
-        }
+        modalCancelBtn.classList.add('hidden');
     }
-});
 
-// Inicia o processo de autenticação
-initializeAuth();
-
-// --- FUNÇÕES DE UTILIDADE E CONFIGURAÇÃO ---
-
-// Variáveis de cache para configurações
-let configData = {};
-let cargos = [];
-let estados = [];
-let feriados = [];
-let redes = [];
-let lojas = [];
-
-// Carrega todas as configurações e as monitora em tempo real
-async function loadConfigAndRouter() {
-    // Prepara a interface se não for uma rota pública
-    if (!['ponto', 'autocadastro'].includes(window.location.hash.substring(1))) {
-        document.getElementById('app-content').innerHTML = '<div class="flex justify-center mt-20"><div class="loader"></div></div>';
+    // Estiliza o botão de acordo com o tipo
+    modalConfirmBtn.className = 'px-4 py-2 rounded font-semibold text-white transition-colors';
+    if (type === 'error' || type === 'delete') {
+        modalConfirmBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+    } else if (type === 'success') {
+        modalConfirmBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+    } else { // info
+        modalConfirmBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
     }
-    
-    // Configurações Globais (Logo, Nome da Empresa)
-    onSnapshot(doc(getColl('config'), 'global'), (docSnapshot) => {
-        if (docSnapshot.exists()) {
-            configData = docSnapshot.data();
-            document.getElementById('logo-display').src = configData.logo || 'https://placehold.co/150x50/334155/ffffff?text=RH';
-            document.getElementById('company-name-display').textContent = configData.companyName || 'RH Enterprise';
-            console.log("Configurações globais carregadas.");
-        }
-    });
 
-    // Cadastro de Cargos
-    onSnapshot(getColl('cargos'), (snapshot) => {
-        cargos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Atualiza a view se necessário
-        if (window.location.hash.substring(1) === 'config') renderConfigPage();
-    });
-
-    // Cadastro de Estados
-    onSnapshot(getColl('estados'), (snapshot) => {
-        estados = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        if (window.location.hash.substring(1) === 'config') renderConfigPage();
-    });
-
-    // Cadastro de Redes
-    onSnapshot(getColl('redes'), (snapshot) => {
-        redes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        if (window.location.hash.substring(1) === 'config') renderConfigPage();
-    });
-
-    // Cadastro de Lojas
-    onSnapshot(getColl('lojas'), (snapshot) => {
-        lojas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        if (window.location.hash.substring(1) === 'config') renderConfigPage();
-    });
-
-    // Cadastro de Feriados
-    onSnapshot(getColl('feriados'), (snapshot) => {
-        feriados = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        if (window.location.hash.substring(1) === 'feriados') renderHolidaysPage();
-    });
-
-    // Após carregar inicial, chama o roteador
-    router(window.location.hash.substring(1) || 'dashboard');
+    modalOverlay.classList.remove('hidden');
 }
 
 
-// --- ROTEAMENTO E RENDERIZAÇÃO DE PÁGINAS ---
+function router(view) {
+    currentView = view;
+    // Remove active class from all nav items
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('bg-slate-700', 'text-white');
+    });
 
-const router = (route) => {
-    const contentEl = document.getElementById('app-content');
-    contentEl.innerHTML = '<div class="flex justify-center mt-20"><div class="loader"></div></div>'; // Loading
-
-    if (route === 'login') {
-        renderLoginPage();
-        document.getElementById('login-screen').classList.remove('hidden');
-        return;
+    // Add active class to the selected nav item
+    const activeItem = document.querySelector(`#sidebar button[onclick*="'${view}'"]`);
+    if (activeItem) {
+        activeItem.classList.add('bg-slate-700', 'text-white');
     }
 
-    // Rotas públicas (Ponto, Autocadastro)
-    if (route === 'ponto' || route === 'autocadastro') {
-        document.getElementById('login-screen').classList.add('hidden');
-        document.getElementById('sidebar').classList.add('hidden');
-        if (route === 'ponto') return renderPointPage();
-        if (route === 'autocadastro') return renderAutoRegisterPage();
-    }
-    
-    // Rotas de Admin (Requer isAdmin)
-    if (!isAdmin) {
-        // Se a rota não é pública e o usuário não é admin, força o login
-        document.getElementById('login-screen').classList.remove('hidden');
-        router('login');
-        return;
+    // Oculta o sidebar em mobile após o clique
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar.classList.contains('absolute')) {
+        sidebar.classList.add('hidden');
+        sidebar.classList.remove('absolute', 'h-full');
     }
 
-    document.getElementById('login-screen').classList.add('hidden');
-    document.getElementById('sidebar').classList.remove('hidden');
-    
-    switch (route) {
+    renderView();
+}
+
+// ----------------------------------------------------
+// RENDERIZAÇÃO DAS TELAS DA APLICAÇÃO (SPA)
+// ----------------------------------------------------
+
+async function renderView() {
+    appContent.innerHTML = `<div class="flex justify-center mt-20"><div class="loader"></div></div>`;
+
+    switch (currentView) {
         case 'dashboard':
-            renderDashboard();
+            await renderDashboard();
             break;
         case 'employees':
-            renderEmployeesPage();
-            break;
-        case 'reports':
-            renderReportsPage();
+            await renderEmployees();
             break;
         case 'config':
-            renderConfigPage();
+            await renderConfig();
             break;
-        case 'feriados':
-            renderHolidaysPage();
+        case 'reports':
+            await renderReports();
             break;
         case 'links':
-            renderLinksPage();
+            await renderLinks();
+            break;
+        case 'employee-point': // Tela de ponto para colaboradores
+            await renderEmployeePointScreen();
+            break;
+        case 'autocadastro': // Tela de auto cadastro público
+            await renderAutocadastroScreen();
             break;
         default:
-            renderDashboard();
+            appContent.innerHTML = `<div class="p-8 text-center text-red-500">Página não encontrada!</div>`;
     }
-    window.location.hash = route;
-};
-
-// Adiciona o listener para mudanças na hash
-window.addEventListener('hashchange', () => {
-    if (isAuthReady) {
-        router(window.location.hash.substring(1));
-    }
-});
-
-
-// --- FUNÇÕES DE RENDERIZAÇÃO DE PÁGINAS (ADMIN) ---
-
-// Função de Login (Simples Admin/Guest)
-async function renderLoginPage() {
-    const el = document.getElementById('login-screen');
-    el.innerHTML = `
-        <div class="bg-white text-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-md">
-            <h2 class="text-2xl font-bold text-center mb-6 text-slate-800">Acesso Gestor</h2>
-            <form id="form-login" onsubmit="event.preventDefault(); adminLogin();">
-                <div class="mb-4">
-                    <label for="login-user" class="block text-gray-700 text-sm font-bold mb-2">Usuário</label>
-                    <input type="text" id="login-user" name="user" class="shadow appearance-none border rounded w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" value="admin" required>
-                </div>
-                <div class="mb-6">
-                    <label for="login-pass" class="block text-gray-700 text-sm font-bold mb-2">Senha</label>
-                    <input type="password" id="login-pass" name="pass" class="shadow appearance-none border rounded w-full py-3 px-4 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline" value="123456" required>
-                </div>
-                <div class="flex items-center justify-between">
-                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-150 w-full">Entrar</button>
-                </div>
-                <p id="login-error" class="text-red-500 text-xs italic mt-4 text-center hidden">Erro ao logar.</p>
-            </form>
-        </div>
-    `;
-    el.classList.remove('hidden');
 }
 
-// Funções de login
-window.adminLogin = async () => {
-    const user = document.getElementById('login-user').value;
-    const pass = document.getElementById('login-pass').value;
-    const errorEl = document.getElementById('login-error');
-    errorEl.classList.add('hidden');
+// ----------------------------------------------------
+// DASHBOARD (Gestor)
+// ----------------------------------------------------
 
+async function renderDashboard() {
     try {
-        const docRef = doc(getColl('admins'), 'admin-user');
-        const docSnap = await getDoc(docRef);
+        const employeesColl = getColl('employees');
+        const pointsColl = getColl('point_records');
 
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            if (data.user === user && data.pass === pass) {
-                // Autenticação bem sucedida do Admin
-                // Nota: Em um app real, o login usaria Firebase Auth. Aqui estamos simulando o acesso.
-                
-                // Simula o login usando o ID 'admin'
-                if (auth.currentUser.uid === 'admin') {
-                    isAdmin = true;
-                    document.getElementById('login-screen').classList.add('hidden');
-                    document.getElementById('sidebar').classList.remove('hidden');
-                    document.getElementById('user-name-display').textContent = 'Admin';
-                    router('dashboard');
-                } else {
-                    // O app usa o token customizado. Se o usuário anônimo logar, apenas simula o acesso.
-                    isAdmin = true;
-                    document.getElementById('login-screen').classList.add('hidden');
-                    document.getElementById('sidebar').classList.remove('hidden');
-                    document.getElementById('user-name-display').textContent = 'Admin';
-                    router('dashboard');
-                }
-                
-                return;
+        // Carregar número de colaboradores
+        const employeesSnap = await getDocs(employeesColl);
+        const numEmployees = employeesSnap.size;
+
+        // Carregar pontos de hoje (simples)
+        const today = new Date().toISOString().split('T')[0];
+        const qToday = query(pointsColl, where('date', '==', today));
+        const pointsTodaySnap = await getDocs(qToday);
+        const numPointsToday = pointsTodaySnap.size;
+
+        let totalPending = 0;
+        let employeesData = [];
+
+        employeesSnap.forEach(doc => {
+            const data = doc.data();
+            employeesData.push({ id: doc.id, ...data });
+
+            // Simples: Conta como pendente se o cargo for 'Novo (Aguardando)'
+            if (data.cargo === 'Novo (Aguardando)') {
+                totalPending++;
             }
-        } else {
-            // Cria o usuário admin padrão se não existir (primeiro acesso)
-            await setDoc(docRef, { user: 'admin', pass: '123456' });
-            if (user === 'admin' && pass === '123456') {
-                isAdmin = true;
-                document.getElementById('login-screen').classList.add('hidden');
-                document.getElementById('sidebar').classList.remove('hidden');
-                document.getElementById('user-name-display').textContent = 'Admin';
-                router('dashboard');
-                return;
-            }
-        }
+        });
 
-        errorEl.textContent = 'Credenciais inválidas.';
-        errorEl.classList.remove('hidden');
+        appContent.innerHTML = `
+            <h1 class="text-3xl font-bold mb-6 text-slate-800">Dashboard de Gestão</h1>
 
-    } catch (e) {
-        console.error("Error logging in: ", e);
-        errorEl.textContent = 'Erro de conexão ou sistema.';
-        errorEl.classList.remove('hidden');
-    }
-};
-
-function renderDashboard() {
-    const contentEl = document.getElementById('app-content');
-    contentEl.innerHTML = `
-        <div class="p-4 md:p-8">
-            <h2 class="text-3xl font-extrabold mb-6 text-slate-800">Dashboard de Gestão RH</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                
-                <!-- Card Colaboradores -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 transition duration-300 hover:shadow-xl">
-                    <div class="flex items-center justify-between">
-                        <i class="fa-solid fa-users text-3xl text-blue-500"></i>
-                        <span class="text-xs font-semibold uppercase text-gray-500">Total de Colaboradores</span>
-                    </div>
-                    <p class="text-4xl font-bold text-gray-900 mt-2" id="dashboard-employees-count">0</p>
-                    <a href="#employees" onclick="router('employees')" class="text-sm text-blue-500 hover:text-blue-700 mt-4 inline-block font-medium">Gerenciar Colaboradores &rarr;</a>
-                </div>
-
-                <!-- Card Cargos -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 transition duration-300 hover:shadow-xl">
-                    <div class="flex items-center justify-between">
-                        <i class="fa-solid fa-briefcase text-3xl text-green-500"></i>
-                        <span class="text-xs font-semibold uppercase text-gray-500">Cargos Cadastrados</span>
-                    </div>
-                    <p class="text-4xl font-bold text-gray-900 mt-2">${cargos.length}</p>
-                    <a href="#config" onclick="router('config')" class="text-sm text-green-500 hover:text-green-700 mt-4 inline-block font-medium">Configurar Estrutura &rarr;</a>
-                </div>
-
-                <!-- Card Redes/Lojas -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 transition duration-300 hover:shadow-xl">
-                    <div class="flex items-center justify-between">
-                        <i class="fa-solid fa-store text-3xl text-yellow-600"></i>
-                        <span class="text-xs font-semibold uppercase text-gray-500">Lojas Atendidas</span>
-                    </div>
-                    <p class="text-4xl font-bold text-gray-900 mt-2">${lojas.length}</p>
-                    <a href="#config" onclick="router('config')" class="text-sm text-yellow-600 hover:text-yellow-800 mt-4 inline-block font-medium">Gerenciar Lojas &rarr;</a>
-                </div>
-
-                <!-- Card Relatórios -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 transition duration-300 hover:shadow-xl">
-                    <div class="flex items-center justify-between">
-                        <i class="fa-solid fa-chart-line text-3xl text-red-500"></i>
-                        <span class="text-xs font-semibold uppercase text-gray-500">Relatórios de Ponto</span>
-                    </div>
-                    <p class="text-4xl font-bold text-gray-900 mt-2">Pronto</p>
-                    <a href="#reports" onclick="router('reports')" class="text-sm text-red-500 hover:text-red-700 mt-4 inline-block font-medium">Gerar Relatórios &rarr;</a>
-                </div>
-
-            </div>
-
-            <!-- Colaboradores Recentes/Pendentes -->
-            <div class="bg-white p-6 rounded-xl shadow-lg mt-8 border border-gray-100">
-                <h3 class="text-2xl font-bold text-slate-800 mb-4">Colaboradores Recentes/Pendentes</h3>
-                <div id="recent-employees-list">Carregando...</div>
-            </div>
-        </div>
-    `;
-    
-    // Atualiza dinamicamente o contador e a lista
-    onSnapshot(getColl('employees'), (snapshot) => {
-        document.getElementById('dashboard-employees-count').textContent = snapshot.docs.length;
-
-        const recentListEl = document.getElementById('recent-employees-list');
-        if (recentListEl) {
-            let employees = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            // Ordena por data de criação (simulada ou campo real se houver)
-            employees.sort((a, b) => (new Date(b.createdAt || 0)) - (new Date(a.createdAt || 0)));
-            const pending = employees.filter(e => e.cargo === 'Novo (Aguardando)');
-            const recent = employees.slice(0, 5);
-
-            recentListEl.innerHTML = `
-                <p class="mb-4 text-sm text-gray-600">Total Pendentes: <span class="font-bold text-red-500">${pending.length}</span></p>
-                <div class="space-y-3">
-                    ${recent.map(e => `
-                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-200">
-                            <span class="font-medium">${e.nomeCompleto}</span>
-                            <span class="text-sm font-semibold px-3 py-1 rounded-full ${e.cargo === 'Novo (Aguardando)' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">${e.cargo}</span>
+            <!-- Widgets de Estatísticas -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <!-- Widget 1: Total de Colaboradores -->
+                <div class="bg-white p-6 rounded-lg shadow-lg border-t-4 border-blue-500 hover:shadow-xl transition-shadow">
+                    <div class="flex items-center">
+                        <i class="fa-solid fa-users text-4xl text-blue-500 mr-4"></i>
+                        <div>
+                            <p class="text-sm font-medium text-gray-500">Colaboradores Cadastrados</p>
+                            <p class="text-3xl font-bold text-gray-900">${numEmployees}</p>
                         </div>
-                    `).join('')}
+                    </div>
                 </div>
-                ${employees.length > 0 ? `<a href="#employees" onclick="router('employees')" class="text-sm text-blue-500 hover:text-blue-700 mt-4 block text-right font-medium">Ver todos &rarr;</a>` : '<p class="text-gray-500 mt-4">Nenhum colaborador cadastrado ainda.</p>'}
-            `;
-        }
-    });
+
+                <!-- Widget 2: Pontos Registrados Hoje -->
+                <div class="bg-white p-6 rounded-lg shadow-lg border-t-4 border-green-500 hover:shadow-xl transition-shadow">
+                    <div class="flex items-center">
+                        <i class="fa-solid fa-clock text-4xl text-green-500 mr-4"></i>
+                        <div>
+                            <p class="text-sm font-medium text-gray-500">Pontos de Hoje</p>
+                            <p class="text-3xl font-bold text-gray-900">${numPointsToday}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Widget 3: Cadastros Pendentes -->
+                <div class="bg-white p-6 rounded-lg shadow-lg border-t-4 border-yellow-500 hover:shadow-xl transition-shadow">
+                    <div class="flex items-center">
+                        <i class="fa-solid fa-exclamation-triangle text-4xl text-yellow-500 mr-4"></i>
+                        <div>
+                            <p class="text-sm font-medium text-gray-500">Cadastros Pendentes</p>
+                            <p class="text-3xl font-bold text-gray-900">${totalPending}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Colaboradores Recentes (ou Pendentes) -->
+            <div class="bg-white p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl font-bold mb-4 text-slate-800">Colaboradores Recentes</h2>
+                ${employeesData.length > 0 ? `
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cargo</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${employeesData.slice(0, 5).map(emp => `
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${emp.nomeCompleto}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${emp.cargo}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${emp.cargo === 'Novo (Aguardando)' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
+                                                ${emp.cargo === 'Novo (Aguardando)' ? 'Pendente' : 'Ativo'}
+                                            </span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button onclick="router('employees');" class="text-indigo-600 hover:text-indigo-900">Ver</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-4 text-center">
+                        <button onclick="router('employees')" class="text-blue-600 hover:text-blue-800 font-semibold">Ver Todos os Colaboradores &rarr;</button>
+                    </div>
+                ` : '<p class="text-gray-500">Nenhum colaborador cadastrado ainda.</p>'}
+            </div>
+        `;
+    } catch (e) {
+        console.error("Erro ao renderizar Dashboard:", e);
+        appContent.innerHTML = `<div class="p-8 text-center text-red-500">Erro ao carregar dados do Dashboard. Verifique a conexão com o Firebase e as regras de segurança.</div>`;
+    }
 }
 
-function renderEmployeesPage() {
-    const contentEl = document.getElementById('app-content');
-    contentEl.innerHTML = `
-        <div class="p-4 md:p-8">
-            <h2 class="text-3xl font-extrabold mb-6 text-slate-800">Gestão de Colaboradores</h2>
-            <div class="flex justify-between items-center mb-6 no-print">
-                <button onclick="showEmployeeModal('add')" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition duration-150">
+// ----------------------------------------------------
+// TELA DE COLABORADORES
+// ----------------------------------------------------
+
+async function renderEmployees() {
+    try {
+        const employeesColl = getColl('employees');
+        const employeesSnap = await getDocs(employeesColl);
+        let employees = employeesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        // Ordena para colocar pendentes no topo
+        employees.sort((a, b) => {
+            if (a.cargo === 'Novo (Aguardando)' && b.cargo !== 'Novo (Aguardando)') return -1;
+            if (a.cargo !== 'Novo (Aguardando)' && b.cargo === 'Novo (Aguardando)') return 1;
+            return a.nomeCompleto.localeCompare(b.nomeCompleto);
+        });
+
+        appContent.innerHTML = `
+            <div class="flex justify-between items-center mb-6">
+                <h1 class="text-3xl font-bold text-slate-800">Gestão de Colaboradores (${employees.length})</h1>
+                <button onclick="showAddEditEmployeeModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors flex items-center gap-2 no-print">
                     <i class="fa-solid fa-user-plus"></i> Novo Colaborador
                 </button>
             </div>
-            
-            <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cargo</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Login</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider no-print">Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody id="employees-table-body" class="bg-white divide-y divide-gray-200">
-                        <!-- Dados serão inseridos aqui pelo listener onSnapshot -->
-                    </tbody>
-                </table>
-                <p id="employees-loading-message" class="py-4 text-center text-gray-500">Carregando colaboradores...</p>
+
+            <div class="bg-white p-6 rounded-lg shadow-lg">
+                <input type="text" id="employee-search" onkeyup="filterEmployees()" placeholder="Buscar por nome, CPF ou cargo..." class="w-full p-3 mb-4 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200" id="employees-table">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cargo</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Login</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200" id="employees-list">
+                            ${renderEmployeeList(employees)}
+                        </tbody>
+                    </table>
+                </div>
+                ${employees.length === 0 ? '<p class="text-center py-8 text-gray-500" id="no-employees-message">Nenhum colaborador cadastrado.</p>' : ''}
             </div>
-        </div>
-    `;
+        `;
 
-    // Listener para Colaboradores (Employee)
-    onSnapshot(getColl('employees'), (snapshot) => {
-        const tableBody = document.getElementById('employees-table-body');
-        const loadingMessage = document.getElementById('employees-loading-message');
-        
-        if (tableBody) {
-            tableBody.innerHTML = '';
-            loadingMessage.classList.add('hidden');
-            
-            if (snapshot.empty) {
-                loadingMessage.textContent = 'Nenhum colaborador cadastrado.';
-                loadingMessage.classList.remove('hidden');
-                return;
-            }
-
-            snapshot.docs.forEach(doc => {
-                const data = doc.data();
-                const row = document.createElement('tr');
-                row.className = 'hover:bg-gray-50 transition duration-100';
-                row.innerHTML = `
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${data.nomeCompleto}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${data.cargo === 'Novo (Aguardando)' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}">
-                            ${data.cargo || 'N/A'}
-                        </span>
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${data.loginUser}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2 no-print">
-                        <button onclick="showEmployeeModal('edit', '${doc.id}')" class="text-indigo-600 hover:text-indigo-900"><i class="fa-solid fa-edit"></i> Editar</button>
-                        <button onclick="deleteEmployee('${doc.id}', '${data.nomeCompleto}')" class="text-red-600 hover:text-red-900 ml-2"><i class="fa-solid fa-trash-alt"></i> Excluir</button>
-                    </td>
-                `;
-                tableBody.appendChild(row);
-            });
-        }
-    });
+        window.employeesData = employees; // Armazena globalmente para busca
+    } catch (e) {
+        console.error("Erro ao renderizar a lista de Colaboradores:", e);
+        appContent.innerHTML = `<div class="p-8 text-center text-red-500">Erro ao carregar lista de colaboradores. Verifique a conexão com o Firebase e as regras de segurança.</div>`;
+    }
 }
 
-// Funções do Modal de Colaborador
-window.showEmployeeModal = async (mode, id = null) => {
-    const modalTitle = mode === 'add' ? 'Adicionar Colaborador' : 'Editar Colaborador';
-    const btnText = mode === 'add' ? 'Cadastrar' : 'Salvar Alterações';
-    const modalContent = document.getElementById('modal-content');
-    
-    // Opções de Cargo
-    const cargoOptions = cargos.map(c => `<option value="${c.nome}">${c.nome}</option>`).join('');
-    // Opções de Estados
-    const estadoOptions = estados.map(e => `<option value="${e.uf}">${e.nome} (${e.uf})</option>`).join('');
-    
-    modalContent.innerHTML = `
-        <h3 class="text-xl font-bold mb-4">${modalTitle}</h3>
-        <form id="form-employee" onsubmit="event.preventDefault(); saveEmployee('${mode}', '${id}')">
-            <input type="hidden" id="employee-id" value="${id || ''}">
+function renderEmployeeList(employees) {
+    if (employees.length === 0) return '';
+    return employees.map(emp => `
+        <tr data-name="${emp.nomeCompleto}" data-cpf="${emp.cpf}" data-cargo="${emp.cargo}">
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                ${emp.nomeCompleto}
+                ${emp.cargo === 'Novo (Aguardando)' ? '<span class="ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Pendente</span>' : ''}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${emp.cargo}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <span class="font-mono text-xs bg-gray-100 p-1 rounded">${emp.loginUser || 'N/A'}</span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium flex gap-2">
+                <button onclick="showAddEditEmployeeModal('${emp.id}')" class="text-indigo-600 hover:text-indigo-900 transition-colors" title="Editar"><i class="fa-solid fa-edit"></i></button>
+                <button onclick="showEmployeeDetailsModal('${emp.id}')" class="text-blue-600 hover:text-blue-900 transition-colors" title="Detalhes"><i class="fa-solid fa-eye"></i></button>
+                <button onclick="confirmDeleteEmployee('${emp.id}', '${emp.nomeCompleto}')" class="text-red-600 hover:text-red-900 transition-colors" title="Excluir"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function filterEmployees() {
+    const filter = document.getElementById('employee-search').value.toLowerCase();
+    const list = document.getElementById('employees-list');
+    const rows = list.querySelectorAll('tr');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+        const name = row.getAttribute('data-name').toLowerCase();
+        const cpf = row.getAttribute('data-cpf').toLowerCase();
+        const cargo = row.getAttribute('data-cargo').toLowerCase();
+
+        if (name.includes(filter) || cpf.includes(filter) || cargo.includes(filter)) {
+            row.style.display = '';
+            visibleCount++;
+        } else {
+            row.style.display = 'none';
+        }
+    });
+
+    const noEmployeesMsg = document.getElementById('no-employees-message');
+    if (noEmployeesMsg) {
+        noEmployeesMsg.style.display = visibleCount === 0 ? 'block' : 'none';
+    }
+}
+
+
+async function showAddEditEmployeeModal(employeeId = null) {
+    const isEdit = !!employeeId;
+    let employee = {};
+    const cargosHtml = globalConfig.cargos ? globalConfig.cargos.map(c => `<option value="${c.name}">${c.name}</option>`).join('') : '<option value="">(Cadastre cargos em Configurações)</option>';
+    const estadosHtml = globalConfig.estados ? globalConfig.estados.map(e => `<option value="${e.uf}">${e.uf} - ${e.name}</option>`).join('') : '<option value="">(Cadastre estados em Configurações)</option>';
+    let selectedUf = '';
+
+    if (isEdit) {
+        try {
+            const docRef = doc(getColl('employees'), employeeId);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                employee = docSnap.data();
+                selectedUf = employee.estado ? employee.estado.split(' - ')[0] : '';
+            } else {
+                showModal('Erro', 'Colaborador não encontrado.', 'error');
+                return;
+            }
+        } catch (e) {
+            console.error("Erro ao carregar colaborador:", e);
+            showModal('Erro', 'Não foi possível carregar os dados do colaborador.', 'error');
+            return;
+        }
+    }
+
+    // Modal Content
+    const modalContent = `
+        <form id="employee-form" class="space-y-4 p-2">
+            <h3 class="text-xl font-bold mb-4">${isEdit ? 'Editar Colaborador' : 'Novo Colaborador'}</h3>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">Nome Completo</label>
-                    <input type="text" id="e-nome" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
+                <!-- Nome Completo -->
+                <div>
+                    <label for="e-nome" class="block text-sm font-medium text-gray-700">Nome Completo <span class="text-red-500">*</span></label>
+                    <input type="text" id="e-nome" value="${employee.nomeCompleto || ''}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
                 </div>
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">Cargo</label>
-                    <select id="e-cargo" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        <option value="">Selecione...</option>
-                        <option value="Novo (Aguardando)">Novo (Aguardando)</option>
-                        ${cargoOptions}
+                <!-- CPF -->
+                <div>
+                    <label for="e-cpf" class="block text-sm font-medium text-gray-700">CPF <span class="text-red-500">*</span></label>
+                    <input type="text" id="e-cpf" value="${employee.cpf || ''}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500" pattern="[0-9]{11}" title="Apenas 11 dígitos numéricos">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- RG -->
+                <div>
+                    <label for="e-rg" class="block text-sm font-medium text-gray-700">RG</label>
+                    <input type="text" id="e-rg" value="${employee.rg || ''}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <!-- Data Nascimento -->
+                <div>
+                    <label for="e-nasc" class="block text-sm font-medium text-gray-700">Data de Nasc.</label>
+                    <input type="date" id="e-nasc" value="${employee.dataNascimento || ''}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- PIS/NIS -->
+                <div>
+                    <label for="e-pis" class="block text-sm font-medium text-gray-700">PIS/NIS</label>
+                    <input type="text" id="e-pis" value="${employee.nisPIS || ''}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <!-- Cargo -->
+                <div>
+                    <label for="e-cargo" class="block text-sm font-medium text-gray-700">Cargo <span class="text-red-500">*</span></label>
+                    <select id="e-cargo" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Selecione um Cargo</option>
+                        ${cargosHtml}
                     </select>
                 </div>
+            </div>
 
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">CPF</label>
-                    <input type="text" id="e-cpf" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                </div>
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">RG</label>
-                    <input type="text" id="e-rg" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                </div>
+            <!-- Endereço -->
+            <div>
+                <label for="e-end" class="block text-sm font-medium text-gray-700">Endereço (Rua, Número, Bairro)</label>
+                <input type="text" id="e-end" value="${employee.endereco || ''}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+            </div>
 
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">Data de Nascimento</label>
-                    <input type="date" id="e-nasc" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                </div>
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">NIS/PIS</label>
-                    <input type="text" id="e-pis" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                </div>
-
-                <div class="col-span-2">
-                    <label class="block text-sm font-medium text-gray-700">Endereço Completo</label>
-                    <input type="text" id="e-end" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                </div>
-
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">Estado (UF)</label>
-                    <select id="e-uf" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                        <option value="">Selecione...</option>
-                        ${estadoOptions}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Estado (UF) -->
+                <div>
+                    <label for="e-uf" class="block text-sm font-medium text-gray-700">Estado (UF)</label>
+                    <select id="e-uf" onchange="loadMunicipios(this.value, 'e-mun')" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Selecione a UF</option>
+                        ${estadosHtml}
                     </select>
                 </div>
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">Município</label>
-                    <input type="text" id="e-mun" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
+                <!-- Município -->
+                <div>
+                    <label for="e-mun" class="block text-sm font-medium text-gray-700">Município</label>
+                    <select id="e-mun" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white focus:border-blue-500 focus:ring-blue-500">
+                        <option value="${employee.municipio || ''}">${employee.municipio || 'Selecione a UF Primeiro'}</option>
+                    </select>
                 </div>
-
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">Login Usuário</label>
-                    <input type="text" id="e-login" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" ${mode === 'edit' ? 'disabled' : ''} required>
-                </div>
-                <div class="col-span-2 md:col-span-1">
-                    <label class="block text-sm font-medium text-gray-700">Login Senha</label>
-                    <input type="text" id="e-pass" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" ${mode === 'edit' ? 'placeholder="Deixe em branco para não alterar"' : ''} required>
-                </div>
-                
-                <div class="col-span-2">
-                    <label class="block text-sm font-medium text-gray-700">Jornada (HH:MM)</label>
-                    <input type="text" id="e-jornada" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" value="08:00" required>
-                </div>
-
             </div>
-            
-            <div class="mt-6 flex justify-end gap-3">
-                <button type="button" onclick="hideModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-150">Cancelar</button>
-                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150">${btnText}</button>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Jornada HH:MM -->
+                <div>
+                    <label for="e-jornada" class="block text-sm font-medium text-gray-700">Jornada de Trabalho (HH:MM) <span class="text-red-500">*</span></label>
+                    <input type="text" id="e-jornada" value="${employee.jornadaHHMM || '08:00'}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500" pattern="[0-9]{2}:[0-9]{2}" title="Formato HH:MM, ex: 08:00">
+                </div>
+                <!-- Login/Senha -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Login/Senha ${isEdit ? '(Apenas visualização)' : '(Gerado Automaticamente)'}</label>
+                    <div class="mt-1 flex gap-2">
+                        <input type="text" id="e-login" value="${employee.loginUser || ''}" placeholder="Usuário" ${isEdit ? 'disabled' : ''} class="block w-1/2 rounded-md border-gray-300 shadow-sm p-2 border bg-gray-100 cursor-not-allowed">
+                        <input type="text" id="e-pass" value="${employee.loginPass || ''}" placeholder="Senha" ${isEdit ? 'disabled' : ''} class="block w-1/2 rounded-md border-gray-300 shadow-sm p-2 border bg-gray-100 cursor-not-allowed">
+                    </div>
+                    ${isEdit ? '<p class="text-xs text-gray-500 mt-1">Para alterar, exclua e recadastre ou edite diretamente no Firestore.</p>' : ''}
+                </div>
             </div>
-            <p id="employee-message" class="text-sm text-center mt-3 hidden"></p>
+
+            <div class="pt-4 flex justify-end gap-3 border-t">
+                <button type="button" onclick="document.getElementById('modal-overlay').classList.add('hidden')" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition-colors">Cancelar</button>
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors">
+                    <i class="fa-solid fa-save"></i> ${isEdit ? 'Salvar Edições' : 'Cadastrar'}
+                </button>
+            </div>
         </form>
     `;
 
-    if (mode === 'edit' && id) {
-        const docSnap = await getDoc(doc(getColl('employees'), id));
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            document.getElementById('e-nome').value = data.nomeCompleto || '';
-            document.getElementById('e-cargo').value = data.cargo || '';
-            document.getElementById('e-cpf').value = data.cpf || '';
-            document.getElementById('e-rg').value = data.rg || '';
-            document.getElementById('e-nasc').value = data.dataNascimento || '';
-            document.getElementById('e-pis').value = data.nisPIS || '';
-            document.getElementById('e-end').value = data.endereco || '';
-            document.getElementById('e-uf').value = data.estado || '';
-            document.getElementById('e-mun').value = data.municipio || '';
-            document.getElementById('e-login').value = data.loginUser || '';
-            // Não preenche a senha em modo edição por segurança
-            document.getElementById('e-pass').removeAttribute('required');
-            document.getElementById('e-jornada').value = data.jornadaHHMM || '08:00';
-        }
-    } else {
-        // Gera um login/senha inicial no modo 'add'
-        const genUser = 'user' + Math.floor(Math.random() * 9000 + 1000);
-        const genPass = Math.random().toString(36).slice(-6);
-        document.getElementById('e-login').value = genUser;
-        document.getElementById('e-pass').value = genPass;
+    showModal(isEdit ? 'Editar Colaborador' : 'Novo Colaborador', modalContent);
+
+    // Pré-selecionar o cargo
+    if (isEdit) {
+        document.getElementById('e-cargo').value = employee.cargo || '';
     }
 
-    document.getElementById('modal-overlay').classList.remove('hidden');
-    document.getElementById('modal-content-container').classList.remove('hidden');
-};
-
-window.saveEmployee = async (mode, id) => {
-    const messageEl = document.getElementById('employee-message');
-    messageEl.classList.remove('hidden', 'text-green-600', 'text-red-600');
-    messageEl.classList.add('text-gray-600');
-    messageEl.textContent = 'Salvando...';
-
-    const employeeData = {
-        nomeCompleto: document.getElementById('e-nome').value,
-        cargo: document.getElementById('e-cargo').value,
-        cpf: document.getElementById('e-cpf').value,
-        rg: document.getElementById('e-rg').value,
-        dataNascimento: document.getElementById('e-nasc').value,
-        nisPIS: document.getElementById('e-pis').value,
-        endereco: document.getElementById('e-end').value,
-        estado: document.getElementById('e-uf').value,
-        municipio: document.getElementById('e-mun').value,
-        loginUser: document.getElementById('e-login').value,
-        jornadaHHMM: document.getElementById('e-jornada').value,
-        updatedAt: serverTimestamp()
-    };
-    
-    const newPass = document.getElementById('e-pass').value;
-    if (newPass) {
-        employeeData.loginPass = newPass;
-    } else if (mode === 'add') {
-        // Se for adição e a senha estiver vazia (não deveria, pois está required), usa um padrão
-        employeeData.loginPass = Math.random().toString(36).slice(-6);
+    // Carregar municípios se estiver editando
+    if (isEdit && selectedUf) {
+        await loadMunicipios(selectedUf, 'e-mun', employee.municipio);
     }
+
+    // Adicionar listener de submit
+    document.getElementById('employee-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await saveEmployee(employeeId, isEdit);
+    });
+}
+
+function generateRandomString(length) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+}
+
+async function saveEmployee(employeeId, isEdit) {
+    const saveButton = document.querySelector('#employee-form button[type="submit"]');
+    saveButton.disabled = true;
+    saveButton.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Salvando...`;
 
     try {
-        if (mode === 'add') {
-            employeeData.createdAt = serverTimestamp();
-            await addDoc(getColl('employees'), employeeData);
-            messageEl.textContent = 'Colaborador cadastrado com sucesso!';
+        const nomeCompleto = document.getElementById('e-nome').value;
+        const cpf = document.getElementById('e-cpf').value;
+        const cargo = document.getElementById('e-cargo').value;
+        const jornadaHHMM = document.getElementById('e-jornada').value;
+
+        if (!nomeCompleto || !cpf || !cargo || !jornadaHHMM) {
+            showModal('Atenção', 'Campos obrigatórios (Nome, CPF, Cargo, Jornada) devem ser preenchidos.', 'error');
+            return;
+        }
+
+        let loginUser = '';
+        let loginPass = '';
+
+        if (!isEdit) {
+            // Gera novas credenciais apenas para novos cadastros
+            const baseUser = nomeCompleto.toLowerCase().split(' ')[0] + cpf.slice(-4);
+            loginUser = baseUser.replace(/[^a-z0-9]/g, ''); // Limpa o usuário
+            loginPass = generateRandomString(6);
         } else {
-            await updateDoc(doc(getColl('employees'), id), employeeData);
-            messageEl.textContent = 'Colaborador atualizado com sucesso!';
-        }
-        messageEl.classList.remove('text-gray-600');
-        messageEl.classList.add('text-green-600');
-        setTimeout(hideModal, 1500);
-
-    } catch (e) {
-        console.error("Erro ao salvar colaborador: ", e);
-        messageEl.textContent = `Erro ao salvar: ${e.message}`;
-        messageEl.classList.remove('text-gray-600');
-        messageEl.classList.add('text-red-600');
-    }
-};
-
-window.deleteEmployee = async (id, name) => {
-    // Uso de modal customizado no lugar de confirm()
-    showCustomModal('Confirmação', `Tem certeza que deseja EXCLUIR o colaborador <b>${name}</b>?`, 'Excluir', async () => {
-        try {
-            await deleteDoc(doc(getColl('employees'), id));
-            showCustomModal('Sucesso', 'Colaborador excluído.', 'OK');
-            hideModal(); // Fecha o modal de confirmação
-        } catch (e) {
-            console.error("Erro ao excluir colaborador: ", e);
-            showCustomModal('Erro', `Não foi possível excluir o colaborador: ${e.message}`, 'OK');
-        }
-    });
-};
-
-// ... (Outras funções de renderização de páginas: renderReportsPage, renderConfigPage, renderHolidaysPage, renderLinksPage, renderPointPage, renderAutoRegisterPage)
-
-function renderReportsPage() {
-    const contentEl = document.getElementById('app-content');
-    contentEl.innerHTML = `
-        <div class="p-4 md:p-8">
-            <h2 class="text-3xl font-extrabold mb-6 text-slate-800 no-print">Relatórios de Ponto</h2>
-            <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 no-print mb-6">
-                <h3 class="text-xl font-semibold mb-4 text-slate-700">Gerar Relatório Mensal</h3>
-                <form id="form-report" onsubmit="event.preventDefault(); generateReport()">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                            <label for="report-month" class="block text-sm font-medium text-gray-700">Mês/Ano</label>
-                            <input type="month" id="report-month" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        </div>
-                        <div>
-                            <label for="report-employee" class="block text-sm font-medium text-gray-700">Colaborador</label>
-                            <select id="report-employee" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                                <option value="all">Todos os Colaboradores</option>
-                                <!-- Opções de Colaborador serão carregadas aqui -->
-                            </select>
-                        </div>
-                        <div class="flex items-end">
-                            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition duration-150 w-full">
-                                <i class="fa-solid fa-file-export"></i> Gerar Relatório
-                            </button>
-                        </div>
-                    </div>
-                </form>
-            </div>
-
-            <div id="report-output-container" class="mt-8">
-                <!-- O relatório será gerado aqui -->
-                <p class="text-center text-gray-500">Selecione o mês e o colaborador para gerar o relatório.</p>
-            </div>
-        </div>
-    `;
-
-    // Carrega as opções de colaborador
-    const employeeSelect = document.getElementById('report-employee');
-    onSnapshot(getColl('employees'), (snapshot) => {
-        employeeSelect.innerHTML = '<option value="all">Todos os Colaboradores</option>';
-        snapshot.docs.forEach(doc => {
-            const data = doc.data();
-            const option = document.createElement('option');
-            option.value = doc.id;
-            option.textContent = data.nomeCompleto;
-            employeeSelect.appendChild(option);
-        });
-    });
-
-    // Define o mês/ano atual como padrão
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    document.getElementById('report-month').value = `${year}-${month}`;
-}
-
-window.generateReport = async () => {
-    const monthYear = document.getElementById('report-month').value;
-    const employeeId = document.getElementById('report-employee').value;
-    const [year, month] = monthYear.split('-').map(Number);
-    
-    if (!year || !month) {
-        showCustomModal('Erro', 'Por favor, selecione um Mês e Ano válidos.', 'OK');
-        return;
-    }
-
-    const outputContainer = document.getElementById('report-output-container');
-    outputContainer.innerHTML = '<div class="flex justify-center mt-8"><div class="loader"></div><p class="ml-3 text-gray-600">Gerando relatório...</p></div>';
-
-    let employeesToReport = [];
-    if (employeeId === 'all') {
-        const snapshot = await getDocs(getColl('employees'));
-        employeesToReport = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } else {
-        const docSnap = await getDoc(doc(getColl('employees'), employeeId));
-        if (docSnap.exists()) {
-            employeesToReport.push({ id: docSnap.id, ...docSnap.data() });
-        }
-    }
-
-    if (employeesToReport.length === 0) {
-        outputContainer.innerHTML = '<p class="text-center text-red-500 mt-8">Nenhum colaborador encontrado para o relatório.</p>';
-        return;
-    }
-
-    // Filtra os feriados para o estado/município (lógica de feriados simplificada)
-    const holidays = feriados.filter(f => f.nivel === 'nacional'); // Apenas nacional por simplicidade
-    
-    const allPointsSnapshot = await getDocs(getColl('points'));
-    const allPoints = allPointsSnapshot.docs.map(doc => doc.data());
-
-    let reportHTML = `<div class="p-4 md:p-8 bg-white rounded-xl shadow-lg print-only">`;
-    reportHTML += `<div class="flex justify-end no-print mb-4"><button onclick="window.print()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition duration-150"><i class="fa-solid fa-print"></i> Imprimir Relatório</button></div>`;
-
-    employeesToReport.forEach(employee => {
-        const employeePoints = allPoints.filter(p => p.employeeId === employee.id && 
-            new Date(p.timestamp.toDate()).getFullYear() === year && 
-            new Date(p.timestamp.toDate()).getMonth() + 1 === month
-        ).sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
-
-        // Agrupa os pontos por dia
-        const dailyPoints = employeePoints.reduce((acc, point) => {
-            const dateStr = point.timestamp.toDate().toISOString().substring(0, 10);
-            if (!acc[dateStr]) acc[dateStr] = [];
-            acc[dateStr].push(point);
-            return acc;
-        }, {});
-        
-        const daysInMonth = new Date(year, month, 0).getDate();
-        const jornadaSegundos = employee.jornadaHHMM ? (parseInt(employee.jornadaHHMM.substring(0, 2)) * 3600 + parseInt(employee.jornadaHHMM.substring(3, 5)) * 60) : (8 * 3600);
-        let totalHorasTrabalhadas = 0;
-        let totalHorasExtras = 0;
-
-        reportHTML += `
-            <div class="report-header-print text-center mb-6">
-                <img src="${configData.logo || 'https://placehold.co/100x30/334155/ffffff?text=RH'}" class="h-8 mx-auto mb-2" alt="Logo">
-                <h1 class="text-xl font-bold text-gray-900">${configData.companyName || 'Relatório de Ponto'}</h1>
-                <p class="text-sm text-gray-600">Relatório Mensal de Ponto - ${String(month).padStart(2, '0')}/${year}</p>
-            </div>
-            
-            <div class="report-data-print grid grid-cols-2 gap-4 text-sm mb-6">
-                <div>
-                    <b>Colaborador:</b> ${employee.nomeCompleto}<br>
-                    <b>Cargo:</b> ${employee.cargo}
-                </div>
-                <div>
-                    <b>Jornada Padrão:</b> ${employee.jornadaHHMM}<br>
-                    <b>Estado/Município:</b> ${employee.estado} / ${employee.municipio}
-                </div>
-            </div>
-
-            <table class="min-w-full divide-y divide-gray-200 border border-gray-300 shadow-md">
-                <thead class="bg-gray-100">
-                    <tr>
-                        <th class="border border-gray-300 px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">Dia</th>
-                        <th class="border border-gray-300 px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">Entrada</th>
-                        <th class="border border-gray-300 px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">Saída Almoço</th>
-                        <th class="border border-gray-300 px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">Volta Almoço</th>
-                        <th class="border border-gray-300 px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">Saída</th>
-                        <th class="border border-gray-300 px-4 py-2 text-right text-xs font-bold text-gray-600 uppercase">Total (HH:MM)</th>
-                        <th class="border border-gray-300 px-4 py-2 text-right text-xs font-bold text-gray-600 uppercase">Horas Extras</th>
-                        <th class="border border-gray-300 px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">Observação</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-        `;
-
-        for (let day = 1; day <= daysInMonth; day++) {
-            const date = new Date(year, month - 1, day);
-            const dateStr = date.toISOString().substring(0, 10);
-            const dayOfWeek = date.getDay(); // 0 = Dom, 6 = Sáb
-            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-            const isHoliday = holidays.some(h => new Date(h.data).toISOString().substring(0, 10) === dateStr);
-            
-            const points = dailyPoints[dateStr] || [];
-            const times = points.map(p => p.timestamp.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-            
-            let totalDiaSegundos = 0;
-            let totalDiaHHMM = '00:00';
-            let horasExtrasDia = '00:00';
-
-            // Calcula a diferença entre pares de pontos (Entrada - Saída Almoço) + (Volta Almoço - Saída)
-            if (points.length >= 2 && points.length % 2 === 0) {
-                for (let i = 0; i < points.length; i += 2) {
-                    if (points[i] && points[i+1]) {
-                        totalDiaSegundos += (points[i+1].timestamp.toDate().getTime() - points[i].timestamp.toDate().getTime()) / 1000;
-                    }
-                }
-                
-                totalHorasTrabalhadas += totalDiaSegundos;
-
-                // Converte totalDiaSegundos para HH:MM
-                const totalH = Math.floor(totalDiaSegundos / 3600);
-                const totalM = Math.floor((totalDiaSegundos % 3600) / 60);
-                totalDiaHHMM = `${String(totalH).padStart(2, '0')}:${String(totalM).padStart(2, '0')}`;
-
-                // Calcula Horas Extras
-                if (totalDiaSegundos > jornadaSegundos) {
-                    const extraSegundos = totalDiaSegundos - jornadaSegundos;
-                    totalHorasExtras += extraSegundos;
-                    const extraH = Math.floor(extraSegundos / 3600);
-                    const extraM = Math.floor((extraSegundos % 3600) / 60);
-                    horasExtrasDia = `${String(extraH).padStart(2, '0')}:${String(extraM).padStart(2, '0')}`;
-                }
-            }
-
-
-            let observation = '';
-            let rowClass = 'text-gray-900';
-            if (isHoliday) {
-                observation = 'Feriado';
-                rowClass = 'bg-yellow-50 text-yellow-800 font-semibold';
-            } else if (isWeekend) {
-                observation = 'Fim de Semana';
-                rowClass = 'bg-gray-50 text-gray-600';
-            } else if (points.length === 0) {
-                observation = 'Falta/Não Registrado';
-                rowClass = 'bg-red-50 text-red-800 font-semibold';
-            } else if (points.length % 2 !== 0) {
-                observation = 'Registro Incompleto';
-                rowClass = 'bg-orange-50 text-orange-800';
-            }
-
-            reportHTML += `
-                <tr class="${rowClass}">
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm font-medium">${day}</td>
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm">${times[0] || '-'}</td>
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm">${times[1] || '-'}</td>
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm">${times[2] || '-'}</td>
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm">${times[3] || '-'}</td>
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm text-right font-medium">${totalDiaHHMM}</td>
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm text-right font-medium text-green-700">${horasExtrasDia}</td>
-                    <td class="border border-gray-300 px-4 py-2 whitespace-nowrap text-sm">${observation}</td>
-                </tr>
-            `;
+            // Mantém as credenciais existentes (disabled no modal)
+            loginUser = document.getElementById('e-login').value;
+            loginPass = document.getElementById('e-pass').value;
         }
 
-        // Soma total
-        const totalH = Math.floor(totalHorasTrabalhadas / 3600);
-        const totalM = Math.floor((totalHorasTrabalhadas % 3600) / 60);
-        const totalGeralHHMM = `${String(totalH).padStart(2, '0')}:${String(totalM).padStart(2, '0')}`;
 
-        const extraH = Math.floor(totalHorasExtras / 3600);
-        const extraM = Math.floor((totalHorasExtras % 3600) / 60);
-        const totalExtraHHMM = `${String(extraH).padStart(2, '0')}:${String(extraM).padStart(2, '0')}`;
-
-
-        reportHTML += `
-                </tbody>
-                <tfoot>
-                    <tr class="bg-blue-50">
-                        <td colspan="5" class="border border-gray-300 px-4 py-2 text-right text-sm font-bold uppercase">Total do Mês:</td>
-                        <td class="border border-gray-300 px-4 py-2 text-right text-sm font-bold">${totalGeralHHMM}</td>
-                        <td class="border border-gray-300 px-4 py-2 text-right text-sm font-bold text-green-700">${totalExtraHHMM}</td>
-                        <td class="border border-gray-300 px-4 py-2 text-sm"></td>
-                    </tr>
-                </tfoot>
-            </table>
-            <div class="mt-8 pt-4 border-t border-gray-300 text-sm">
-                <p><b>Legenda:</b> <span class="bg-red-50 text-red-800 px-2 rounded">Falta/Não Registrado</span> | <span class="bg-yellow-50 text-yellow-800 px-2 rounded">Feriado</span></p>
-                <p class="mt-4">Declaro que as informações acima são verídicas. <br><br>_____________________________<br>Assinatura do Colaborador</p>
-            </div>
-            <div class="page-break-after"></div>
-        `;
-    });
-
-    reportHTML += `</div>`;
-    outputContainer.innerHTML = reportHTML;
-};
-
-
-function renderConfigPage() {
-    const contentEl = document.getElementById('app-content');
-    contentEl.innerHTML = `
-        <div class="p-4 md:p-8">
-            <h2 class="text-3xl font-extrabold mb-6 text-slate-800">Configurações e Estrutura</h2>
-            
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                <!-- Geral/Logo -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 lg:col-span-1">
-                    <h3 class="text-xl font-semibold mb-4 text-slate-700 border-b pb-2">Configurações Gerais (Logo)</h3>
-                    <form id="form-config" onsubmit="event.preventDefault(); saveConfig()">
-                        <div class="mb-4">
-                            <label for="company-name-input" class="block text-sm font-medium text-gray-700">Nome da Empresa</label>
-                            <input type="text" id="company-name-input" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" value="${configData.companyName || ''}">
-                        </div>
-                        <div class="mb-4">
-                            <label for="logo-upload" class="block text-sm font-medium text-gray-700">Upload de Logo (PNG/JPG < 100KB)</label>
-                            <input type="file" id="logo-upload" accept="image/png, image/jpeg" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                        </div>
-                        <div class="mb-4 text-center">
-                            <img id="current-logo-preview" src="${configData.logo || 'https://placehold.co/150x50/cccccc/000000?text=LOGO'}" class="w-24 h-8 object-contain mx-auto border p-1 rounded-md" alt="Logo Preview">
-                            <p class="text-xs text-gray-500 mt-1">Logo Atual</p>
-                        </div>
-                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 w-full">Salvar Configurações</button>
-                        <p id="config-message" class="text-sm text-center mt-3 hidden"></p>
-                    </form>
-                </div>
-
-                <!-- Cargos -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 lg:col-span-2">
-                    <h3 class="text-xl font-semibold mb-4 text-slate-700 border-b pb-2">Gestão de Cargos</h3>
-                    <form onsubmit="event.preventDefault(); addStructureItem('cargos', 'cargo-name')" class="flex gap-2 mb-4">
-                        <input type="text" id="cargo-name" placeholder="Nome do Cargo (Ex: Promotor Fixo)" class="flex-1 rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150"><i class="fa-solid fa-plus"></i> Add</button>
-                    </form>
-                    <div id="cargos-list" class="space-y-2">
-                        ${cargos.length > 0 ? cargos.map(c => renderStructureItem(c.id, c.nome, 'cargos')).join('') : '<p class="text-gray-500">Nenhum cargo cadastrado.</p>'}
-                    </div>
-                </div>
-
-                <!-- Estados Atendidos -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 lg:col-span-3">
-                    <h3 class="text-xl font-semibold mb-4 text-slate-700 border-b pb-2">Estados Atendidos (UF)</h3>
-                    <form onsubmit="event.preventDefault(); addEstado()" class="flex gap-2 mb-4">
-                        <input type="text" id="estado-uf" placeholder="UF (Ex: SP)" class="w-20 rounded-md border-gray-300 shadow-sm p-2 border uppercase" maxlength="2" required>
-                        <input type="text" id="estado-name" placeholder="Nome do Estado (Ex: São Paulo)" class="flex-1 rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150"><i class="fa-solid fa-plus"></i> Add</button>
-                    </form>
-                    <div id="estados-list" class="flex flex-wrap gap-3">
-                        ${estados.length > 0 ? estados.map(e => `<span class="bg-gray-200 text-gray-800 px-3 py-1 rounded-full text-sm">${e.nome} (${e.uf}) <button onclick="deleteStructureItem('estados', '${e.id}', '${e.nome}')" class="ml-1 text-red-500 hover:text-red-700"><i class="fa-solid fa-times-circle"></i></button></span>`).join('') : '<p class="text-gray-500">Nenhum estado cadastrado.</p>'}
-                    </div>
-                </div>
-
-                <!-- Redes e Lojas -->
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 lg:col-span-3">
-                    <h3 class="text-xl font-semibold mb-4 text-slate-700 border-b pb-2">Redes e Lojas (Varejo)</h3>
-                    
-                    <h4 class="font-bold mt-4 mb-2">Redes</h4>
-                    <form onsubmit="event.preventDefault(); addStructureItem('redes', 'rede-name')" class="flex gap-2 mb-4">
-                        <input type="text" id="rede-name" placeholder="Nome da Rede (Ex: Supermercados X)" class="flex-1 rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150"><i class="fa-solid fa-plus"></i> Add</button>
-                    </form>
-                    <div id="redes-list" class="space-y-2 mb-6">
-                        ${redes.length > 0 ? redes.map(r => renderStructureItem(r.id, r.nome, 'redes')).join('') : '<p class="text-gray-500">Nenhuma rede cadastrada.</p>'}
-                    </div>
-
-                    <h4 class="font-bold mt-4 mb-2">Lojas</h4>
-                    <form onsubmit="event.preventDefault(); addLoja()" class="grid grid-cols-1 md:grid-cols-4 gap-2 mb-4">
-                        <select id="loja-rede" class="col-span-1 rounded-md border-gray-300 shadow-sm p-2 border" required>
-                            <option value="">Selecione a Rede...</option>
-                            ${redes.map(r => `<option value="${r.nome}">${r.nome}</option>`).join('')}
-                        </select>
-                        <input type="text" id="loja-name" placeholder="Nome da Loja/Unidade" class="col-span-2 rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150"><i class="fa-solid fa-plus"></i> Add Loja</button>
-                    </form>
-                    <div id="lojas-list" class="space-y-2">
-                        ${lojas.length > 0 ? lojas.map(l => renderLojaItem(l.id, l.rede, l.nome)).join('') : '<p class="text-gray-500">Nenhuma loja cadastrada.</p>'}
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    `;
-
-    // Preview do logo
-    document.getElementById('logo-upload').addEventListener('change', (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                document.getElementById('current-logo-preview').src = e.target.result;
-            };
-            reader.readAsDataURL(file);
-        }
-    });
-
-    // Função auxiliar para renderizar item de estrutura (Cargo/Rede)
-    window.renderStructureItem = (id, nome, collectionName) => `
-        <div class="flex justify-between items-center p-2 bg-gray-50 rounded border">
-            <span>${nome}</span>
-            <button onclick="deleteStructureItem('${collectionName}', '${id}', '${nome}')" class="text-red-500 hover:text-red-700"><i class="fa-solid fa-trash-alt"></i> Excluir</button>
-        </div>
-    `;
-    
-    // Função auxiliar para renderizar item de loja
-    window.renderLojaItem = (id, rede, nome) => `
-        <div class="flex justify-between items-center p-2 bg-gray-50 rounded border">
-            <span><b>[${rede}]</b> ${nome}</span>
-            <button onclick="deleteStructureItem('lojas', '${id}', '${nome}')" class="text-red-500 hover:text-red-700"><i class="fa-solid fa-trash-alt"></i> Excluir</button>
-        </div>
-    `;
-
-}
-
-window.saveConfig = async () => {
-    const messageEl = document.getElementById('config-message');
-    messageEl.classList.remove('hidden', 'text-green-600', 'text-red-600');
-    messageEl.classList.add('text-gray-600');
-    messageEl.textContent = 'Salvando...';
-
-    const companyName = document.getElementById('company-name-input').value;
-    const file = document.getElementById('logo-upload').files[0];
-    let logoUrl = configData.logo || '';
-
-    try {
-        if (file) {
-            if (file.size > 100 * 1024) { // Limite de 100KB
-                throw new Error("O arquivo da logo é muito grande. Use uma imagem menor que 100KB.");
-            }
-            
-            // Converte a imagem para Base64 (simplificado, já que o README menciona Base64)
-            const reader = new FileReader();
-            const base64Promise = new Promise((resolve, reject) => {
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = error => reject(error);
-                reader.readAsDataURL(file);
-            });
-            logoUrl = await base64Promise;
-        }
-
-        const dataToSave = {
-            companyName: companyName,
-            logo: logoUrl
+        const data = {
+            nomeCompleto: nomeCompleto,
+            cpf: cpf,
+            rg: document.getElementById('e-rg').value,
+            dataNascimento: document.getElementById('e-nasc').value,
+            nisPIS: document.getElementById('e-pis').value,
+            endereco: document.getElementById('e-end').value,
+            estado: document.getElementById('e-uf').value,
+            municipio: document.getElementById('e-mun').value,
+            cargo: cargo,
+            jornadaHHMM: jornadaHHMM,
+            loginUser: loginUser,
+            loginPass: loginPass,
+            lastUpdate: serverTimestamp()
         };
 
-        await setDoc(doc(getColl('config'), 'global'), dataToSave);
-        messageEl.textContent = 'Configurações salvas com sucesso!';
-        messageEl.classList.remove('text-gray-600');
-        messageEl.classList.add('text-green-600');
-    } catch (e) {
-        console.error("Erro ao salvar configuração: ", e);
-        messageEl.textContent = `Erro ao salvar: ${e.message}`;
-        messageEl.classList.remove('text-gray-600');
-        messageEl.classList.add('text-red-600');
-    }
-}
-
-window.addStructureItem = async (collectionName, inputId) => {
-    const nome = document.getElementById(inputId).value;
-    if (!nome) return;
-
-    try {
-        await addDoc(getColl(collectionName), { nome: nome });
-        document.getElementById(inputId).value = '';
-    } catch (e) {
-        console.error(`Erro ao adicionar item em ${collectionName}: `, e);
-        showCustomModal('Erro', `Não foi possível adicionar o item: ${e.message}`, 'OK');
-    }
-}
-
-window.addEstado = async () => {
-    const uf = document.getElementById('estado-uf').value.toUpperCase();
-    const nome = document.getElementById('estado-name').value;
-    if (!uf || !nome) return;
-
-    try {
-        await addDoc(getColl('estados'), { uf: uf, nome: nome });
-        document.getElementById('estado-uf').value = '';
-        document.getElementById('estado-name').value = '';
-    } catch (e) {
-        console.error(`Erro ao adicionar estado: `, e);
-        showCustomModal('Erro', `Não foi possível adicionar o estado: ${e.message}`, 'OK');
-    }
-}
-
-window.addLoja = async () => {
-    const rede = document.getElementById('loja-rede').value;
-    const nome = document.getElementById('loja-name').value;
-    if (!rede || !nome) return;
-
-    try {
-        await addDoc(getColl('lojas'), { rede: rede, nome: nome });
-        document.getElementById('loja-name').value = '';
-        // A rede deve ser mantida, talvez
-    } catch (e) {
-        console.error(`Erro ao adicionar loja: `, e);
-        showCustomModal('Erro', `Não foi possível adicionar a loja: ${e.message}`, 'OK');
-    }
-}
-
-window.deleteStructureItem = async (collectionName, id, name) => {
-    showCustomModal('Confirmação', `Tem certeza que deseja EXCLUIR o item <b>${name}</b>?`, 'Excluir', async () => {
-        try {
-            await deleteDoc(doc(getColl(collectionName), id));
-            showCustomModal('Sucesso', 'Item excluído.', 'OK');
-        } catch (e) {
-            console.error("Erro ao excluir item: ", e);
-            showCustomModal('Erro', `Não foi possível excluir o item: ${e.message}`, 'OK');
+        if (isEdit) {
+            // Edição
+            const docRef = doc(getColl('employees'), employeeId);
+            await updateDoc(docRef, data);
+            showModal('Sucesso', 'Colaborador atualizado com sucesso!', 'success');
+        } else {
+            // Novo cadastro
+            data.createdAt = serverTimestamp();
+            await addDoc(getColl('employees'), data);
+            showModal('Sucesso', `Colaborador **${nomeCompleto}** cadastrado! <br><br> Credenciais de Acesso: <br> Usuário: **${loginUser}** <br> Senha: **${loginPass}**`, 'success');
         }
-    });
+
+        // Fecha o modal e recarrega a lista
+        document.getElementById('modal-overlay').classList.add('hidden');
+        await renderEmployees();
+
+    } catch (e) {
+        console.error("Erro ao salvar colaborador:", e);
+        showModal('Erro', `Não foi possível salvar os dados do colaborador: ${e.message}`, 'error');
+    } finally {
+        saveButton.disabled = false;
+        saveButton.innerHTML = `<i class="fa-solid fa-save"></i> ${isEdit ? 'Salvar Edições' : 'Cadastrar'}`;
+    }
+}
+
+async function showEmployeeDetailsModal(employeeId) {
+    try {
+        const docRef = doc(getColl('employees'), employeeId);
+        const docSnap = await getDoc(docRef);
+
+        if (!docSnap.exists()) {
+            showModal('Erro', 'Colaborador não encontrado.', 'error');
+            return;
+        }
+
+        const employee = docSnap.data();
+
+        const detailsHtml = `
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <!-- Coluna 1 -->
+                <div class="space-y-2">
+                    <p><strong>Nome:</strong> ${employee.nomeCompleto}</p>
+                    <p><strong>Cargo:</strong> ${employee.cargo}</p>
+                    <p><strong>Jornada:</strong> ${employee.jornadaHHMM}</p>
+                    <p><strong>Login:</strong> <span class="font-mono bg-gray-100 p-1 rounded text-xs">${employee.loginUser || 'N/A'}</span></p>
+                    <p><strong>Senha:</strong> <span class="font-mono bg-gray-100 p-1 rounded text-xs">${employee.loginPass || 'N/A'}</span></p>
+                </div>
+                <!-- Coluna 2 -->
+                <div class="space-y-2">
+                    <p><strong>CPF:</strong> ${employee.cpf || 'N/A'}</p>
+                    <p><strong>RG:</strong> ${employee.rg || 'N/A'}</p>
+                    <p><strong>PIS/NIS:</strong> ${employee.nisPIS || 'N/A'}</p>
+                    <p><strong>Nascimento:</strong> ${employee.dataNascimento || 'N/A'}</p>
+                    <p><strong>Endereço:</strong> ${employee.endereco || 'N/A'}</p>
+                    <p><strong>Local:</strong> ${employee.municipio || 'N/A'} - ${employee.estado ? employee.estado.split(' - ')[0] : 'N/A'}</p>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end gap-3 border-t pt-4">
+                <button onclick="showAddEditEmployeeModal('${employeeId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors"><i class="fa-solid fa-edit"></i> Editar</button>
+                <button onclick="confirmDeleteEmployee('${employeeId}', '${employee.nomeCompleto}')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors"><i class="fa-solid fa-trash"></i> Excluir</button>
+            </div>
+        `;
+
+        showModal('Detalhes do Colaborador', detailsHtml, 'info');
+
+    } catch (e) {
+        console.error("Erro ao exibir detalhes:", e);
+        showModal('Erro', 'Não foi possível carregar os detalhes do colaborador.', 'error');
+    }
+}
+
+function confirmDeleteEmployee(employeeId, employeeName) {
+    showModal('Confirmação de Exclusão',
+        `<p>Você tem certeza que deseja **excluir permanentemente** o colaborador **${employeeName}**?</p><p class="text-red-600 font-bold mt-2">Esta ação é irreversível.</p>`,
+        'delete',
+        async () => {
+            await deleteEmployee(employeeId);
+        },
+        true // Mostrar botão Cancelar
+    );
+}
+
+async function deleteEmployee(employeeId) {
+    try {
+        const docRef = doc(getColl('employees'), employeeId);
+        await deleteDoc(docRef);
+        showModal('Sucesso', 'Colaborador excluído com sucesso!', 'success');
+        await renderEmployees(); // Recarrega a lista
+    } catch (e) {
+        console.error("Erro ao excluir colaborador:", e);
+        showModal('Erro', 'Não foi possível excluir o colaborador.', 'error');
+    }
 }
 
 
-function renderHolidaysPage() {
-    const contentEl = document.getElementById('app-content');
-    
-    // Opções de Nível
-    const nivelOptions = [
-        { value: 'nacional', label: 'Nacional' },
-        { value: 'estadual', label: 'Estadual' },
-        { value: 'municipal', label: 'Municipal' }
-    ];
-    
-    // Opções de Estado para nível Estadual/Municipal
-    const estadoOptions = estados.map(e => `<option value="${e.uf}">${e.uf} - ${e.nome}</option>`).join('');
+// ----------------------------------------------------
+// TELA DE CONFIGURAÇÕES (Estrutura: Cargos, Estados, Redes, Feriados)
+// ----------------------------------------------------
 
-    contentEl.innerHTML = `
-        <div class="p-4 md:p-8">
-            <h2 class="text-3xl font-extrabold mb-6 text-slate-800">Cadastro de Feriados</h2>
-            
-            <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 mb-6">
-                <h3 class="text-xl font-semibold mb-4 text-slate-700 border-b pb-2">Adicionar Novo Feriado</h3>
-                <form onsubmit="event.preventDefault(); addHoliday()" class="grid grid-cols-1 md:grid-cols-5 gap-4">
-                    <div class="md:col-span-2">
-                        <label for="holiday-name" class="block text-sm font-medium text-gray-700">Nome do Feriado</label>
-                        <input type="text" id="holiday-name" placeholder="Ex: Natal" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                    </div>
-                    <div>
-                        <label for="holiday-date" class="block text-sm font-medium text-gray-700">Data</label>
-                        <input type="date" id="holiday-date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                    </div>
-                    <div>
-                        <label for="holiday-level" class="block text-sm font-medium text-gray-700">Nível</label>
-                        <select id="holiday-level" onchange="toggleHolidayLocation()" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                            ${nivelOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div id="holiday-location-fields" class="hidden">
-                        <label for="holiday-state" class="block text-sm font-medium text-gray-700">Local (Estado/Município)</label>
-                        <select id="holiday-state" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                            <option value="">Selecione o Estado (Obrigatório)</option>
-                            ${estadoOptions}
-                        </select>
-                        <input type="text" id="holiday-city" placeholder="Município (Opcional)" class="mt-2 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                    </div>
-                    <div class="flex items-end">
-                        <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 w-full"><i class="fa-solid fa-plus"></i> Adicionar</button>
-                    </div>
-                </form>
-                <p id="holiday-message" class="text-sm text-center mt-3 hidden"></p>
+async function renderConfig() {
+    try {
+        await loadGlobalConfig(); // Garante que a config está atualizada
+
+        appContent.innerHTML = `
+            <h1 class="text-3xl font-bold mb-6 text-slate-800">Configurações de Estrutura</h1>
+            <div class="space-y-8">
+                ${renderConfigSection('Cargos', 'cargos', 'fa-briefcase', 'Nome do Cargo (ex: Promotor Fixo)')}
+                ${renderConfigSection('Estados Atendidos', 'estados', 'fa-globe', 'UF - Nome do Estado (ex: SP - São Paulo)')}
+                ${renderConfigSection('Redes e Lojas', 'redesLojas', 'fa-store', 'Nome da Rede ou Loja (ex: Supermercado X)')}
+                ${renderConfigSection('Feriados', 'feriados', 'fa-calendar-alt', 'Data e Nome (ex: 25/12 - Natal)', 'date')}
+            </div>
+        `;
+
+        // Atribui listeners após a renderização
+        document.querySelectorAll('.add-config-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const type = btn.dataset.type;
+                showAddConfigModal(type);
+            });
+        });
+
+    } catch (e) {
+        console.error("Erro ao renderizar Configurações:", e);
+        appContent.innerHTML = `<div class="p-8 text-center text-red-500">Erro ao carregar Configurações. Verifique a conexão com o Firebase e as regras de segurança.</div>`;
+    }
+}
+
+function renderConfigSection(title, type, icon, placeholder, valueType = 'text') {
+    const list = globalConfig[type] || [];
+    return `
+        <div class="bg-white p-6 rounded-lg shadow-lg border-t-4 border-indigo-500">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-slate-800 flex items-center gap-3">
+                    <i class="fa-solid ${icon} text-indigo-500"></i> ${title} (${list.length})
+                </h2>
+                <button data-type="${type}" class="add-config-btn bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors text-sm">
+                    <i class="fa-solid fa-plus"></i> Adicionar
+                </button>
             </div>
 
-            <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
-                <h3 class="text-xl font-semibold mb-4 text-slate-700 border-b pb-2">Feriados Cadastrados</h3>
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nível</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Local</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider no-print">Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody id="holidays-table-body" class="bg-white divide-y divide-gray-200">
-                        ${feriados.length > 0 ? feriados.sort((a, b) => new Date(a.data) - new Date(b.data)).map(f => `
-                            <tr class="hover:bg-gray-50 transition duration-100">
-                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${f.data ? new Date(f.data + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'N/A'}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${f.nome}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">${f.nivel}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${f.estado ? `${f.estado}${f.municipio ? ` (${f.municipio})` : ''}` : 'N/A'}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium no-print">
-                                    <button onclick="deleteStructureItem('feriados', '${f.id}', '${f.nome}')" class="text-red-600 hover:text-red-900"><i class="fa-solid fa-trash-alt"></i> Excluir</button>
-                                </td>
-                            </tr>
-                        `).join('') : `<tr><td colspan="5" class="text-center py-4 text-gray-500">Nenhum feriado cadastrado.</td></tr>`}
-                    </tbody>
-                </table>
+            <div class="space-y-3">
+                ${list.length > 0 ? list.map((item, index) => `
+                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg border">
+                        <span class="text-gray-700">${item.name || item.date}</span>
+                        <div class="flex gap-2">
+                            <button onclick="showEditConfigModal('${type}', ${index})" class="text-blue-600 hover:text-blue-800 transition-colors" title="Editar"><i class="fa-solid fa-edit"></i></button>
+                            <button onclick="confirmDeleteConfig('${type}', ${index}, '${item.name || item.date}')" class="text-red-600 hover:text-red-800 transition-colors" title="Excluir"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </div>
+                `).join('') : `<p class="text-gray-500">Nenhum item cadastrado para ${title}.</p>`}
             </div>
         </div>
     `;
+}
 
-    window.toggleHolidayLocation = () => {
-        const level = document.getElementById('holiday-level').value;
-        const locationFields = document.getElementById('holiday-location-fields');
-        if (level === 'estadual' || level === 'municipal') {
-            locationFields.classList.remove('hidden');
-            document.getElementById('holiday-state').setAttribute('required', 'true');
+// ----------------------------------------------------
+// GERENCIAMENTO DE DADOS DE CONFIGURAÇÃO (Global)
+// ----------------------------------------------------
+
+async function loadGlobalConfig() {
+    try {
+        const docRef = doc(db, `/artifacts/${appId}/public/data/config/global`);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            globalConfig = docSnap.data();
         } else {
-            locationFields.classList.add('hidden');
-            document.getElementById('holiday-state').removeAttribute('required');
+            globalConfig = {};
         }
-    };
 
-    window.addHoliday = async () => {
-        const messageEl = document.getElementById('holiday-message');
-        messageEl.classList.remove('hidden', 'text-green-600', 'text-red-600');
-        messageEl.classList.add('text-gray-600');
-        messageEl.textContent = 'Adicionando...';
+    } catch (e) {
+        console.error("Erro ao carregar configuração global:", e);
+        // Não mostrar modal, apenas logar, pois a ausência é esperada no primeiro acesso.
+    }
+}
 
-        const nome = document.getElementById('holiday-name').value;
-        const data = document.getElementById('holiday-date').value;
-        const nivel = document.getElementById('holiday-level').value;
-        const estado = document.getElementById('holiday-state').value;
-        const municipio = document.getElementById('holiday-city').value;
-        
-        const holidayData = { nome, data, nivel, estado: '', municipio: '' };
+async function saveGlobalConfig(configData) {
+    try {
+        const docRef = doc(db, `/artifacts/${appId}/public/data/config/global`);
+        await setDoc(docRef, configData, { merge: true });
+        globalConfig = configData; // Atualiza o estado local
+        return true;
+    } catch (e) {
+        console.error("Erro ao salvar configuração global:", e);
+        showModal('Erro', 'Não foi possível salvar a configuração no Firebase.', 'error');
+        return false;
+    }
+}
 
-        if (nivel === 'estadual' || nivel === 'municipal') {
-            if (!estado) {
-                messageEl.textContent = 'Selecione o Estado para feriados estaduais/municipais.';
-                messageEl.classList.add('text-red-600');
+function showAddConfigModal(type) {
+    let title = '';
+    let label = '';
+    let inputType = 'text';
+
+    switch (type) {
+        case 'cargos':
+            title = 'Adicionar Novo Cargo';
+            label = 'Nome do Cargo:';
+            break;
+        case 'estados':
+            title = 'Adicionar Novo Estado (UF - Nome)';
+            label = 'Estado (ex: SP - São Paulo):';
+            break;
+        case 'redesLojas':
+            title = 'Adicionar Nova Rede/Loja';
+            label = 'Nome da Rede/Loja:';
+            break;
+        case 'feriados':
+            title = 'Adicionar Feriado';
+            label = 'Data do Feriado:';
+            inputType = 'date';
+            break;
+    }
+
+    const modalContent = `
+        <form id="config-form" data-type="${type}" class="space-y-4 p-2">
+            <div>
+                <label for="config-value" class="block text-sm font-medium text-gray-700">${label}</label>
+                <input type="${inputType}" id="config-value" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-indigo-500 focus:ring-indigo-500">
+            </div>
+            ${type === 'feriados' ? `
+            <div>
+                <label for="config-name" class="block text-sm font-medium text-gray-700">Nome do Feriado:</label>
+                <input type="text" id="config-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-indigo-500 focus:ring-indigo-500">
+            </div>
+            ` : ''}
+
+            <div class="pt-4 flex justify-end gap-3 border-t">
+                <button type="button" onclick="document.getElementById('modal-overlay').classList.add('hidden')" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition-colors">Cancelar</button>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors">
+                    <i class="fa-solid fa-plus"></i> Adicionar
+                </button>
+            </div>
+        </form>
+    `;
+
+    showModal(title, modalContent);
+
+    document.getElementById('config-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const value = document.getElementById('config-value').value.trim();
+        let name = type === 'feriados' ? document.getElementById('config-name').value.trim() : value;
+
+        if (type === 'estados') {
+            const parts = value.split(' - ').map(p => p.trim());
+            if (parts.length < 2 || parts[0].length !== 2) {
+                showModal('Erro', 'Formato incorreto. Use: UF - Nome do Estado (ex: SP - São Paulo).', 'error');
                 return;
             }
-            holidayData.estado = estado;
-            if (nivel === 'municipal') {
-                holidayData.municipio = municipio || ''; // Município é opcional, mas recomendado
-            }
+            name = parts[1];
         }
-        
-        try {
-            await addDoc(getColl('feriados'), holidayData);
-            messageEl.textContent = 'Feriado adicionado com sucesso!';
-            messageEl.classList.add('text-green-600');
-            
-            // Limpa os campos
-            document.getElementById('form-holiday').reset();
-            document.getElementById('holiday-location-fields').classList.add('hidden');
-        } catch (e) {
-            console.error("Erro ao adicionar feriado: ", e);
-            messageEl.textContent = `Erro ao adicionar: ${e.message}`;
-            messageEl.classList.add('text-red-600');
-        }
-    };
-}
 
-
-function renderLinksPage() {
-    const contentEl = document.getElementById('app-content');
-    const pontoLink = `${window.location.origin}${window.location.pathname}#ponto`;
-    const autocadastroLink = `${window.location.origin}${window.location.pathname}#autocadastro`;
-
-    contentEl.innerHTML = `
-        <div class="p-4 md:p-8">
-            <h2 class="text-3xl font-extrabold mb-6 text-slate-800">Links de Acesso Público</h2>
-            <div class="space-y-6">
-                
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
-                    <h3 class="text-xl font-semibold mb-4 text-slate-700">Link do Ponto Eletrônico</h3>
-                    <p class="text-gray-600 mb-4">Compartilhe este link com os colaboradores para que eles possam registrar o ponto (requer login individual).</p>
-                    <div class="flex flex-col md:flex-row gap-2">
-                        <input type="text" id="ponto-link" value="${pontoLink}" class="flex-1 rounded-md border-gray-300 shadow-sm p-3 border bg-gray-50 font-mono text-sm" readonly>
-                        <button onclick="copyToClipboard('ponto-link')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 flex items-center justify-center gap-2">
-                            <i class="fa-solid fa-copy"></i> Copiar
-                        </button>
-                    </div>
-                </div>
-
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
-                    <h3 class="text-xl font-semibold mb-4 text-slate-700">Link de Autocadastro de Colaborador</h3>
-                    <p class="text-gray-600 mb-4">Use este link para permitir que novos candidatos ou funcionários preencham seus dados básicos antes da aprovação.</p>
-                    <div class="flex flex-col md:flex-row gap-2">
-                        <input type="text" id="autocadastro-link" value="${autocadastroLink}" class="flex-1 rounded-md border-gray-300 shadow-sm p-3 border bg-gray-50 font-mono text-sm" readonly>
-                        <button onclick="copyToClipboard('autocadastro-link')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 flex items-center justify-center gap-2">
-                            <i class="fa-solid fa-copy"></i> Copiar
-                        </button>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    `;
-
-    window.copyToClipboard = (elementId) => {
-        const copyText = document.getElementById(elementId);
-        copyText.select();
-        copyText.setSelectionRange(0, 99999); 
-        try {
-            document.execCommand('copy');
-            showCustomModal('Copiado!', 'O link foi copiado para a área de transferência.', 'OK');
-        } catch (err) {
-            showCustomModal('Erro', 'Não foi possível copiar o link. Tente manualmente.', 'OK');
-        }
-    };
-}
-
-
-// --- PÁGINAS PÚBLICAS ---
-
-function renderPointPage() {
-    const contentEl = document.getElementById('app-content');
-    contentEl.innerHTML = `
-        <div class="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
-            <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md text-center border border-blue-100">
-                <img src="${configData.logo || 'https://placehold.co/150x50/334155/ffffff?text=RH'}" class="h-10 object-contain mx-auto mb-6" alt="Logo">
-                <h2 class="text-2xl font-bold mb-6 text-slate-800">${configData.companyName || 'Ponto Eletrônico'}</h2>
-                
-                <div id="point-interface">
-                    <form id="form-point-login" onsubmit="event.preventDefault(); pointLogin()">
-                        <p class="text-lg font-medium mb-4 text-gray-700">Login Colaborador</p>
-                        <div class="mb-4">
-                            <input type="text" id="ponto-user" placeholder="Usuário (Login)" class="shadow appearance-none border rounded w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required>
-                        </div>
-                        <div class="mb-6">
-                            <input type="password" id="ponto-pass" placeholder="Senha" class="shadow appearance-none border rounded w-full py-3 px-4 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline" required>
-                        </div>
-                        <div class="mb-4 text-left">
-                            <label class="inline-flex items-center">
-                                <input type="checkbox" id="manter-conectado" class="form-checkbox h-5 w-5 text-blue-600 rounded">
-                                <span class="ml-2 text-gray-700 text-sm">Manter conectado</span>
-                            </label>
-                        </div>
-                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-150 w-full">Entrar</button>
-                        <p id="ponto-error" class="text-red-500 text-xs italic mt-4 text-center hidden"></p>
-                    </form>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    // Tenta reautenticar se houver dados salvos (simplificado)
-    const savedLogin = JSON.parse(localStorage.getItem('pontoUser')) || {};
-    if (savedLogin.user && savedLogin.pass) {
-        document.getElementById('ponto-user').value = savedLogin.user;
-        document.getElementById('ponto-pass').value = savedLogin.pass;
-        document.getElementById('manter-conectado').checked = true;
-        // Tenta logar automaticamente (para um app real, seria melhor usar um token)
-        pointLogin(savedLogin.user, savedLogin.pass);
-    }
-}
-
-window.pointLogin = async (savedUser = null, savedPass = null) => {
-    const user = savedUser || document.getElementById('ponto-user').value;
-    const pass = savedPass || document.getElementById('ponto-pass').value;
-    const errorEl = document.getElementById('ponto-error');
-    const manterConectado = document.getElementById('manter-conectado')?.checked;
-    errorEl.classList.add('hidden');
-
-    try {
-        const employeesRef = getColl('employees');
-        const q = query(employeesRef, where('loginUser', '==', user), where('loginPass', '==', pass));
-        const employeeSnapshot = await getDocs(q);
-
-        if (!employeeSnapshot.empty) {
-            const employeeDoc = employeeSnapshot.docs[0];
-            const employeeData = { id: employeeDoc.id, ...employeeDoc.data() };
-            
-            // Logado com sucesso
-            document.getElementById('ponto-interface').innerHTML = `
-                <i class="fa-solid fa-user-check text-5xl text-green-500 mb-4"></i>
-                <h3 class="text-xl font-bold mb-2">Bem-vindo(a), ${employeeData.nomeCompleto}!</h3>
-                <p class="text-gray-600 mb-6">Pronto para registrar o ponto.</p>
-                <button onclick="registerPoint('${employeeData.id}', '${employeeData.nomeCompleto}')" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-150 w-full flex items-center justify-center gap-2">
-                    <i class="fa-solid fa-clock"></i> Bater Ponto Agora (${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit'})})
-                </button>
-                <button onclick="pointLogout()" class="mt-4 text-sm text-red-500 hover:text-red-700">Sair/Trocar Usuário</button>
-                <div id="point-register-message" class="text-sm mt-4"></div>
-            `;
-            
-            // Salva o login se "Manter conectado" estiver marcado
-            if (manterConectado) {
-                localStorage.setItem('pontoUser', JSON.stringify({ user, pass }));
+        if (value) {
+            let newItem = {};
+            if (type === 'feriados') {
+                newItem = { date: value, name: name };
+            } else if (type === 'estados') {
+                newItem = { uf: value.split(' - ')[0].toUpperCase(), name: name };
             } else {
-                localStorage.removeItem('pontoUser');
+                newItem = { name: value };
             }
 
-        } else {
-            errorEl.textContent = 'Usuário ou senha inválidos.';
-            errorEl.classList.remove('hidden');
+            const currentList = globalConfig[type] || [];
+            if (currentList.some(item => (item.name || item.date) === (newItem.name || newItem.date))) {
+                showModal('Atenção', `O item "${name || value}" já existe.`, 'info');
+                return;
+            }
+
+            currentList.push(newItem);
+            const success = await saveGlobalConfig({ ...globalConfig, [type]: currentList });
+
+            if (success) {
+                document.getElementById('modal-overlay').classList.add('hidden');
+                await renderConfig();
+            }
         }
-
-    } catch (e) {
-        console.error("Error logging in ponto: ", e);
-        errorEl.textContent = 'Erro de conexão ou sistema.';
-        errorEl.classList.remove('hidden');
-    }
-};
-
-window.pointLogout = () => {
-    localStorage.removeItem('pontoUser');
-    router('ponto');
+    });
 }
 
-window.registerPoint = async (employeeId, employeeName) => {
-    const messageEl = document.getElementById('point-register-message');
-    messageEl.innerHTML = '<span class="text-gray-600">Registrando ponto...</span>';
-    
-    try {
-        const pointData = {
-            employeeId: employeeId,
-            employeeName: employeeName,
-            timestamp: serverTimestamp(),
-            type: 'manual', // Indica que foi batido no sistema
-            location: 'N/A' // Simples, já que não temos GPS
-        };
 
-        await addDoc(getColl('points'), pointData);
-        messageEl.innerHTML = `<span class="text-green-600 font-bold">Ponto registrado com sucesso às ${new Date().toLocaleTimeString('pt-BR')}!</span>`;
-        
-        // Atualiza o botão para mostrar o novo horário
-        document.querySelector('button[onclick^="registerPoint"]').innerHTML = `<i class="fa-solid fa-clock"></i> Bater Ponto Agora (${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit'})})`;
-        document.querySelector('button[onclick^="registerPoint"]').classList.remove('bg-green-600');
-        document.querySelector('button[onclick^="registerPoint"]').classList.add('bg-orange-600');
+function showEditConfigModal(type, index) {
+    let list = globalConfig[type] || [];
+    let item = list[index];
+
+    if (!item) {
+        showModal('Erro', 'Item de configuração não encontrado.', 'error');
+        return;
+    }
+
+    let title = '';
+    let label = '';
+    let value = '';
+    let inputType = 'text';
+
+    switch (type) {
+        case 'cargos':
+            title = 'Editar Cargo';
+            label = 'Nome do Cargo:';
+            value = item.name;
+            break;
+        case 'estados':
+            title = 'Editar Estado (UF - Nome)';
+            label = 'Estado (ex: SP - São Paulo):';
+            value = `${item.uf} - ${item.name}`;
+            break;
+        case 'redesLojas':
+            title = 'Editar Rede/Loja';
+            label = 'Nome da Rede/Loja:';
+            value = item.name;
+            break;
+        case 'feriados':
+            title = 'Editar Feriado';
+            label = 'Data do Feriado:';
+            inputType = 'date';
+            value = item.date;
+            break;
+    }
+
+    const modalContent = `
+        <form id="config-form-edit" data-type="${type}" data-index="${index}" class="space-y-4 p-2">
+            <div>
+                <label for="config-value-edit" class="block text-sm font-medium text-gray-700">${label}</label>
+                <input type="${inputType}" id="config-value-edit" value="${value}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-indigo-500 focus:ring-indigo-500">
+            </div>
+            ${type === 'feriados' ? `
+            <div>
+                <label for="config-name-edit" class="block text-sm font-medium text-gray-700">Nome do Feriado:</label>
+                <input type="text" id="config-name-edit" value="${item.name}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-indigo-500 focus:ring-indigo-500">
+            </div>
+            ` : ''}
+
+            <div class="pt-4 flex justify-end gap-3 border-t">
+                <button type="button" onclick="document.getElementById('modal-overlay').classList.add('hidden')" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition-colors">Cancelar</button>
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors">
+                    <i class="fa-solid fa-save"></i> Salvar
+                </button>
+            </div>
+        </form>
+    `;
+
+    showModal(title, modalContent);
+
+    document.getElementById('config-form-edit').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const newValue = document.getElementById('config-value-edit').value.trim();
+        const newName = type === 'feriados' ? document.getElementById('config-name-edit').value.trim() : newValue;
+
+        if (newValue) {
+            let updatedItem = {};
+            if (type === 'feriados') {
+                updatedItem = { date: newValue, name: newName };
+            } else if (type === 'estados') {
+                const parts = newValue.split(' - ').map(p => p.trim());
+                if (parts.length < 2 || parts[0].length !== 2) {
+                    showModal('Erro', 'Formato incorreto. Use: UF - Nome do Estado (ex: SP - São Paulo).', 'error');
+                    return;
+                }
+                updatedItem = { uf: parts[0].toUpperCase(), name: parts[1] };
+            } else {
+                updatedItem = { name: newValue };
+            }
+
+            let newList = [...list];
+            // Verifica duplicidade, excluindo o item atual
+            const isDuplicate = newList.some((i, idx) => idx !== index && (i.name || i.date) === (updatedItem.name || updatedItem.date));
+
+            if (isDuplicate) {
+                showModal('Atenção', `O item "${newName || newValue}" já existe.`, 'info');
+                return;
+            }
+
+            newList[index] = updatedItem;
+
+            const success = await saveGlobalConfig({ ...globalConfig, [type]: newList });
+
+            if (success) {
+                document.getElementById('modal-overlay').classList.add('hidden');
+                await renderConfig();
+            }
+        }
+    });
+}
+
+function confirmDeleteConfig(type, index, itemName) {
+    showModal('Confirmação de Exclusão',
+        `<p>Você tem certeza que deseja excluir "**${itemName}**" da lista de ${type}?</p>`,
+        'delete',
+        async () => {
+            let list = globalConfig[type] || [];
+            list.splice(index, 1);
+
+            const success = await saveGlobalConfig({ ...globalConfig, [type]: list });
+            if (success) {
+                document.getElementById('modal-overlay').classList.add('hidden');
+                await renderConfig();
+            }
+        },
+        true // Mostrar botão Cancelar
+    );
+}
+
+// ----------------------------------------------------
+// TELA DE RELATÓRIOS (Simples)
+// ----------------------------------------------------
+
+async function renderReports() {
+    // Busca todos os registros de ponto e colaboradores
+    try {
+        const pointsSnap = await getDocs(getColl('point_records'));
+        const employeesSnap = await getDocs(getColl('employees'));
+
+        const points = pointsSnap.docs.map(doc => doc.data());
+        const employeesMap = employeesSnap.docs.reduce((acc, doc) => {
+            acc[doc.id] = doc.data();
+            return acc;
+        }, {});
+
+        // Processamento básico para o relatório
+        const reportData = points.reduce((acc, record) => {
+            const employee = employeesMap[record.employeeId];
+            if (!employee) return acc;
+
+            const key = record.date; // Agrupa por dia
+            if (!acc[key]) {
+                acc[key] = {
+                    date: key,
+                    totalPoints: 0,
+                    employees: new Set()
+                };
+            }
+            acc[key].totalPoints++;
+            acc[key].employees.add(employee.nomeCompleto);
+            return acc;
+        }, {});
+
+        const sortedReport = Object.values(reportData).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        appContent.innerHTML = `
+            <div class="flex justify-between items-center mb-6">
+                <h1 class="text-3xl font-bold text-slate-800">Relatórios de Ponto</h1>
+                <button onclick="window.print()" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors text-sm no-print">
+                    <i class="fa-solid fa-print"></i> Imprimir
+                </button>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl font-bold mb-4 text-slate-800">Resumo Diário de Registros</h2>
+
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total de Registros</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Colaboradores c/ Ponto</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Detalhes (Simulado)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            ${sortedReport.map(item => `
+                                <tr>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${formatDateBR(item.date)}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item.totalPoints}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item.employees.size}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        <button onclick="showDailyReportDetails('${item.date}')" class="text-indigo-600 hover:text-indigo-900 transition-colors" title="Ver Detalhes"><i class="fa-solid fa-file-alt"></i> Ver</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ${sortedReport.length === 0 ? '<p class="text-center py-8 text-gray-500">Nenhum registro de ponto encontrado.</p>' : ''}
+            </div>
+        `;
+    } catch (e) {
+        console.error("Erro ao renderizar Relatórios:", e);
+        appContent.innerHTML = `<div class="p-8 text-center text-red-500">Erro ao carregar Relatórios. Verifique a conexão com o Firebase e as regras de segurança.</div>`;
+    }
+}
+
+async function showDailyReportDetails(date) {
+    try {
+        const pointsColl = getColl('point_records');
+        const employeesColl = getColl('employees');
+
+        const q = query(pointsColl, where('date', '==', date));
+        const pointsSnap = await getDocs(q);
+        const points = pointsSnap.docs.map(doc => doc.data());
+
+        const employeeIds = [...new Set(points.map(p => p.employeeId))];
+        const employeesMap = {};
+        for (const id of employeeIds) {
+            const docSnap = await getDoc(doc(employeesColl, id));
+            if (docSnap.exists()) {
+                employeesMap[id] = docSnap.data();
+            }
+        }
+
+        // Agrupa registros por colaborador
+        const employeePoints = points.reduce((acc, p) => {
+            if (!acc[p.employeeId]) {
+                acc[p.employeeId] = {
+                    name: employeesMap[p.employeeId]?.nomeCompleto || 'Colaborador Desconhecido',
+                    records: []
+                };
+            }
+            acc[p.employeeId].records.push(p);
+            return acc;
+        }, {});
+
+        // Ordena os registros de cada colaborador por timestamp
+        Object.values(employeePoints).forEach(emp => {
+            emp.records.sort((a, b) => (a.timestamp.seconds || a.timestamp) - (b.timestamp.seconds || b.timestamp));
+        });
+
+        const detailsHtml = `
+            <h3 class="text-xl font-bold mb-4">Registros de Ponto - ${formatDateBR(date)}</h3>
+            <div class="space-y-6 max-h-96 overflow-y-auto p-2">
+                ${Object.values(employeePoints).map(emp => `
+                    <div class="border p-4 rounded-lg bg-gray-50">
+                        <p class="font-semibold text-lg text-slate-800">${emp.name}</p>
+                        <ul class="mt-2 space-y-1">
+                            ${emp.records.map(r => `
+                                <li class="text-sm flex justify-between items-center border-b pb-1 last:border-b-0">
+                                    <span><i class="fa-solid fa-clock text-blue-500 mr-2"></i> ${r.time}</span>
+                                    <span class="text-xs text-gray-500">(${r.location || 'Local Não Informado'})</span>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="mt-6 flex justify-end gap-3 border-t pt-4">
+                <button onclick="document.getElementById('modal-overlay').classList.add('hidden')" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition-colors">Fechar</button>
+            </div>
+        `;
+
+        showModal('Detalhes do Relatório Diário', detailsHtml, 'info');
 
     } catch (e) {
-        console.error("Erro ao registrar ponto: ", e);
-        messageEl.innerHTML = `<span class="text-red-600">Erro ao registrar ponto: ${e.message}</span>`;
+        console.error("Erro ao mostrar detalhes do relatório:", e);
+        showModal('Erro', 'Não foi possível carregar os detalhes do relatório.', 'error');
     }
-};
+}
 
 
-function renderAutoRegisterPage() {
-    const contentEl = document.getElementById('app-content');
-    
-    // Opções de Estado
-    const estadoOptions = estados.map(e => `<option value="${e.uf}">${e.uf} - ${e.nome}</option>`).join('');
+// ----------------------------------------------------
+// TELA DE LINKS DE ACESSO
+// ----------------------------------------------------
 
-    contentEl.innerHTML = `
-        <div class="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
-            <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-lg text-center border border-indigo-100">
-                <img src="${configData.logo || 'https://placehold.co/150x50/334155/ffffff?text=RH'}" class="h-10 object-contain mx-auto mb-6" alt="Logo">
-                <h2 class="text-2xl font-bold mb-2 text-slate-800">Autocadastro de Colaborador</h2>
-                <p class="text-gray-600 mb-6">Preencha seus dados para iniciar o processo de contratação. O cargo será 'Novo (Aguardando)' até ser aprovado.</p>
-                
-                <form id="form-autocadastro" onsubmit="event.preventDefault(); submitAutoRegisterForm()">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-                        
-                        <div class="col-span-2">
-                            <label class="block text-sm font-medium text-gray-700">Nome Completo</label>
-                            <input type="text" id="a-nome" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">CPF</label>
-                            <input type="text" id="a-cpf" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">RG</label>
-                            <input type="text" id="a-rg" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                        </div>
+async function renderLinks() {
+    const pontoLink = window.location.origin + window.location.pathname + '?view=point';
+    const autocadastroLink = window.location.origin + window.location.pathname + '?view=autocadastro';
 
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Data de Nascimento</label>
-                            <input type="date" id="a-nasc" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">NIS/PIS</label>
-                            <input type="text" id="a-pis" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border">
-                        </div>
+    appContent.innerHTML = `
+        <h1 class="text-3xl font-bold mb-6 text-slate-800">Links de Acesso Público</h1>
+        <p class="text-gray-600 mb-8">Utilize estes links para que os colaboradores possam bater ponto e realizar o autocadastro, sem a necessidade de acessar o painel de gestão.</p>
 
-                        <div class="col-span-2">
-                            <label class="block text-sm font-medium text-gray-700">Endereço Completo</label>
-                            <input type="text" id="a-end" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Link do Ponto -->
+            <div class="bg-white p-6 rounded-lg shadow-lg border-l-4 border-blue-500">
+                <h2 class="text-xl font-bold mb-3 text-slate-800 flex items-center gap-2">
+                    <i class="fa-solid fa-clock-rotate-left text-blue-500"></i> Link de Batida de Ponto
+                </h2>
+                <p class="text-gray-600 mb-3">Página onde o colaborador entra com seu login e senha para registrar o ponto.</p>
+                <div class="bg-gray-100 p-3 rounded-lg border border-dashed border-gray-300 flex items-center justify-between gap-3">
+                    <span id="ponto-link-display" class="text-sm font-mono text-gray-700 break-all">${pontoLink}</span>
+                    <button onclick="copyToClipboard('ponto-link-display')" class="text-blue-600 hover:text-blue-800 transition-colors" title="Copiar Link">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
+                </div>
+            </div>
 
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Estado (UF)</label>
-                            <select id="a-uf" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                                <option value="">Selecione...</option>
-                                ${estadoOptions}
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Município</label>
-                            <input type="text" id="a-mun" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border" required>
-                        </div>
+            <!-- Link de Autocadastro -->
+            <div class="bg-white p-6 rounded-lg shadow-lg border-l-4 border-green-500">
+                <h2 class="text-xl font-bold mb-3 text-slate-800 flex items-center gap-2">
+                    <i class="fa-solid fa-user-plus text-green-500"></i> Link de Autocadastro
+                </h2>
+                <p class="text-gray-600 mb-3">Página para que novos colaboradores possam preencher seus dados iniciais.</p>
+                <div class="bg-gray-100 p-3 rounded-lg border border-dashed border-gray-300 flex items-center justify-between gap-3">
+                    <span id="autocadastro-link-display" class="text-sm font-mono text-gray-700 break-all">${autocadastroLink}</span>
+                    <button onclick="copyToClipboard('autocadastro-link-display')" class="text-green-600 hover:text-green-800 transition-colors" title="Copiar Link">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
 
+        <div class="mt-8 p-6 bg-yellow-50 rounded-lg border border-yellow-200">
+            <h3 class="text-lg font-bold text-yellow-800 flex items-center gap-2"><i class="fa-solid fa-exclamation-triangle"></i> Atenção</h3>
+            <p class="text-yellow-700 mt-2">Certifique-se de que o Firebase Firestore está configurado no modo de teste para permitir acesso público a esses links, conforme indicado no README.</p>
+        </div>
+    `;
+}
+
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    const text = element.textContent || element.innerText;
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showModal('Copiado!', 'O link foi copiado para a área de transferência.', 'success');
+    } catch (err) {
+        console.error('Falha ao copiar:', err);
+        showModal('Erro', 'Não foi possível copiar o texto automaticamente.', 'error');
+    }
+}
+
+// ----------------------------------------------------
+// TELA DE BATIDA DE PONTO (Colaborador)
+// ----------------------------------------------------
+
+async function renderEmployeePointScreen() {
+    // Verifica se o colaborador já está logado na sessão (via localStorage)
+    currentEmployeeId = localStorage.getItem('employeeId');
+
+    if (currentEmployeeId) {
+        await renderPointClock(currentEmployeeId);
+    } else {
+        renderPointLogin();
+    }
+}
+
+function renderPointLogin() {
+    appContent.innerHTML = `
+        <div class="flex flex-col justify-center items-center p-4">
+            <div class="bg-white text-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-md mt-10">
+                <h2 class="text-2xl font-bold text-center mb-6 text-slate-800">Bater Ponto</h2>
+                <form id="form-point-login" class="space-y-4">
+                    <div>
+                        <label for="p-user" class="block text-sm font-medium text-gray-700">Usuário:</label>
+                        <input type="text" id="p-user" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500" placeholder="Seu usuário de ponto">
                     </div>
-                    
-                    <button type="submit" class="mt-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-150 w-full">Enviar Cadastro para Análise</button>
-                    <p id="autocadastro-message" class="text-sm text-center mt-4 hidden"></p>
+                    <div>
+                        <label for="p-pass" class="block text-sm font-medium text-gray-700">Senha:</label>
+                        <input type="password" id="p-pass" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500" placeholder="Sua senha">
+                    </div>
+
+                    <p id="point-login-message" class="text-sm text-red-500 text-center"></p>
+
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors">
+                        Entrar e Bater Ponto
+                    </button>
                 </form>
             </div>
         </div>
     `;
+
+    document.getElementById('form-point-login').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const user = document.getElementById('p-user').value;
+        const pass = document.getElementById('p-pass').value;
+        await pointLogin(user, pass);
+    });
 }
 
-window.submitAutoRegisterForm = async () => {
-    const el = document.getElementById('app-content');
-    const messageEl = document.getElementById('autocadastro-message');
-    messageEl.classList.remove('hidden', 'text-green-600', 'text-red-600');
-    messageEl.classList.add('text-gray-600');
-    messageEl.textContent = 'Enviando cadastro...';
+async function pointLogin(user, pass) {
+    const msg = document.getElementById('point-login-message');
+    const loginButton = document.querySelector('#form-point-login button[type="submit"]');
+    msg.textContent = '';
+
+    if (loginButton) {
+        loginButton.disabled = true;
+        loginButton.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Entrando...`;
+    }
 
     try {
-        // Gera credenciais provisórias
-        const genUser = 'temp' + Math.floor(Math.random() * 90000);
-        const genPass = Math.random().toString(36).slice(-6);
-        
+        // 1. Tenta encontrar o colaborador
+        const employeesRef = getColl('employees');
+        const q = query(employeesRef, where('loginUser', '==', user), where('loginPass', '==', pass));
+        const querySnapshot = await getDocs(q);
+
+        if (querySnapshot.empty) {
+            msg.textContent = 'Usuário ou senha inválidos.';
+            return;
+        }
+
+        const employeeDoc = querySnapshot.docs[0];
+        currentEmployeeId = employeeDoc.id;
+
+        // 2. Armazena o ID do funcionário logado
+        localStorage.setItem('employeeId', currentEmployeeId);
+
+        // 3. Renderiza a tela de relógio
+        await renderPointClock(currentEmployeeId);
+
+    } catch (error) {
+        console.error("Erro no login de ponto:", error);
+        msg.textContent = `Erro ao tentar conectar: ${error.message}`;
+    } finally {
+        if (loginButton) {
+            loginButton.disabled = false;
+            loginButton.innerHTML = `Entrar e Bater Ponto`;
+        }
+    }
+}
+
+async function renderPointClock(employeeId) {
+    let employeeData = {};
+    let employeeName = 'Colaborador';
+    let todayRecords = [];
+    let isLocationAvailable = 'Determining...';
+    let locationData = {};
+
+    try {
+        // 1. Buscar dados do colaborador
+        const docSnap = await getDoc(doc(getColl('employees'), employeeId));
+        if (docSnap.exists()) {
+            employeeData = docSnap.data();
+            employeeName = employeeData.nomeCompleto;
+        } else {
+            showModal('Erro', 'Colaborador não encontrado. Faça login novamente.', 'error', () => {
+                pointLogout();
+            });
+            return;
+        }
+
+        // 2. Buscar registros de ponto de hoje
+        const today = new Date().toISOString().split('T')[0];
+        const q = query(getColl('point_records'), where('employeeId', '==', employeeId), where('date', '==', today));
+        const recordsSnap = await getDocs(q);
+        todayRecords = recordsSnap.docs.map(doc => doc.data()).sort((a, b) => (a.timestamp.seconds || a.timestamp) - (b.timestamp.seconds || b.timestamp));
+
+        // 3. Obter localização
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    isLocationAvailable = 'A localização foi registrada.';
+                    locationData = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracy: position.coords.accuracy,
+                        timestamp: new Date().toISOString()
+                    };
+                    document.getElementById('location-status').textContent = isLocationAvailable;
+                    document.getElementById('location-status').classList.remove('text-yellow-600');
+                    document.getElementById('location-status').classList.add('text-green-600');
+                    document.getElementById('point-button').disabled = false;
+                    window.pointLocationData = locationData; // Salva para uso na batida
+                },
+                (error) => {
+                    console.error("Erro de geolocalização:", error);
+                    isLocationAvailable = 'Localização indisponível. O ponto será registrado sem coordenadas GPS.';
+                    document.getElementById('location-status').textContent = isLocationAvailable;
+                    document.getElementById('location-status').classList.remove('text-yellow-600');
+                    document.getElementById('location-status').classList.add('text-red-600');
+                    document.getElementById('point-button').disabled = false;
+                    window.pointLocationData = {};
+                },
+                { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+            );
+        } else {
+            isLocationAvailable = 'Geolocalização não suportada pelo seu navegador. O ponto será registrado sem coordenadas GPS.';
+            document.getElementById('location-status').textContent = isLocationAvailable;
+            document.getElementById('location-status').classList.remove('text-yellow-600');
+            document.getElementById('location-status').classList.add('text-red-600');
+            document.getElementById('point-button').disabled = false;
+            window.pointLocationData = {};
+        }
+
+    } catch (e) {
+        console.error("Erro ao carregar relógio de ponto:", e);
+        showModal('Erro', 'Não foi possível carregar os dados do colaborador. Tente novamente.', 'error', () => {
+            pointLogout();
+        });
+        return;
+    }
+
+    appContent.innerHTML = `
+        <div class="flex flex-col justify-center items-center p-4">
+            <div class="bg-white text-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-md mt-10 space-y-6">
+                <div class="text-center">
+                    <h2 class="text-xl font-semibold text-slate-800">Bem-vindo(a),</h2>
+                    <p class="text-3xl font-bold text-blue-600">${employeeName}</p>
+                    <p class="text-sm text-gray-500 mt-1">Cargo: ${employeeData.cargo}</p>
+                </div>
+
+                <!-- Relógio Digital -->
+                <div class="text-center">
+                    <div id="point-clock" class="text-6xl font-extrabold text-slate-900 mb-2">--:--:--</div>
+                    <div id="point-date" class="text-lg font-medium text-gray-600">${formatDateBR(new Date().toISOString().split('T')[0])}</div>
+                </div>
+
+                <!-- Botão de Bater Ponto -->
+                <button id="point-button" onclick="recordPoint('${employeeId}')" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-4 rounded-lg shadow-lg transition-colors text-xl disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                    <i class="fa-solid fa-check-circle"></i> BATER PONTO
+                </button>
+
+                <!-- Status da Localização -->
+                <div class="text-center p-3 bg-gray-50 rounded-lg border">
+                    <p id="location-status" class="text-sm font-medium text-yellow-600">
+                        <i class="fa-solid fa-location-dot mr-1"></i> Aguardando localização...
+                    </p>
+                </div>
+
+                <!-- Registros de Hoje -->
+                <div>
+                    <h3 class="text-lg font-semibold mb-3 border-b pb-1 text-slate-800">Registros de Hoje (${todayRecords.length})</h3>
+                    <ul id="today-records-list" class="space-y-2 max-h-40 overflow-y-auto">
+                        ${todayRecords.length > 0 ? todayRecords.map(r => `
+                            <li class="flex justify-between items-center text-gray-700 text-sm bg-blue-50 p-2 rounded-md">
+                                <span><i class="fa-solid fa-arrow-right-to-bracket mr-2"></i> ${r.time}</span>
+                                <span class="text-xs text-blue-700 font-medium">${r.location || 'Local Não Registrado'}</span>
+                            </li>
+                        `).join('') : '<p class="text-sm text-gray-500 text-center">Nenhum ponto registrado hoje.</p>'}
+                    </ul>
+                </div>
+
+                <!-- Logout -->
+                <div class="pt-4 border-t">
+                    <button onclick="pointLogout()" class="w-full text-red-500 hover:text-red-700 transition-colors font-medium">
+                        <i class="fa-solid fa-power-off mr-2"></i> Sair do Ponto
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Inicia o relógio
+    updatePointClock();
+    window.pointClockInterval = setInterval(updatePointClock, 1000);
+    window.updateTodayRecords = () => updateRecordsList(todayRecords); // Função para atualizar a lista após batida
+}
+
+function updatePointClock() {
+    const clockElement = document.getElementById('point-clock');
+    if (clockElement) {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        clockElement.textContent = timeString;
+    } else {
+        clearInterval(window.pointClockInterval);
+    }
+}
+
+async function recordPoint(employeeId) {
+    const pointButton = document.getElementById('point-button');
+    pointButton.disabled = true;
+    pointButton.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Registrando...`;
+
+    try {
+        const now = new Date();
+        const date = now.toISOString().split('T')[0];
+        const time = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+        const locationData = window.pointLocationData || {};
+        let location = '';
+        if (locationData.latitude) {
+            location = `Lat: ${locationData.latitude.toFixed(4)}, Lon: ${locationData.longitude.toFixed(4)}`;
+        } else {
+            location = 'Sem GPS';
+        }
+
+        const newRecord = {
+            employeeId: employeeId,
+            date: date,
+            time: time,
+            timestamp: now.getTime(), // Usamos timestamp numérico para facilitar ordenação
+            location: location,
+            locationDetails: JSON.stringify(locationData), // Salva detalhes completos em JSON string
+            createdAt: serverTimestamp()
+        };
+
+        await addDoc(getColl('point_records'), newRecord);
+
+        // Atualiza a lista de registros de hoje
+        const recordsSnap = await getDocs(query(getColl('point_records'), where('employeeId', '==', employeeId), where('date', '==', date)));
+        const updatedRecords = recordsSnap.docs.map(doc => doc.data()).sort((a, b) => (a.timestamp.seconds || a.timestamp) - (b.timestamp.seconds || b.timestamp));
+        updateRecordsList(updatedRecords);
+
+
+        showModal('Sucesso!', `Ponto registrado às ${time}.`, 'success');
+
+    } catch (e) {
+        console.error("Erro ao registrar ponto:", e);
+        showModal('Erro', `Não foi possível registrar o ponto: ${e.message}`, 'error');
+    } finally {
+        pointButton.disabled = false;
+        pointButton.innerHTML = `<i class="fa-solid fa-check-circle"></i> BATER PONTO`;
+        // Força a re-obtenção da localização após a batida para garantir dados frescos.
+        if (navigator.geolocation && document.getElementById('location-status')) {
+            document.getElementById('location-status').textContent = 'Aguardando localização...';
+            document.getElementById('location-status').classList.remove('text-green-600', 'text-red-600');
+            document.getElementById('location-status').classList.add('text-yellow-600');
+            document.getElementById('point-button').disabled = true;
+            window.pointLocationData = null;
+            renderPointClock(employeeId); // Recarrega para iniciar a busca de localização
+        }
+    }
+}
+
+function updateRecordsList(records) {
+    const listElement = document.getElementById('today-records-list');
+    if (listElement) {
+        listElement.innerHTML = records.map(r => `
+            <li class="flex justify-between items-center text-gray-700 text-sm bg-blue-50 p-2 rounded-md">
+                <span><i class="fa-solid fa-arrow-right-to-bracket mr-2"></i> ${r.time}</span>
+                <span class="text-xs text-blue-700 font-medium">${r.location || 'Local Não Registrado'}</span>
+            </li>
+        `).join('');
+    }
+}
+
+
+function pointLogout() {
+    localStorage.removeItem('employeeId');
+    currentEmployeeId = null;
+    if (window.pointClockInterval) {
+        clearInterval(window.pointClockInterval);
+    }
+    // Redireciona para a tela de login de ponto
+    router('employee-point');
+}
+
+
+// ----------------------------------------------------
+// TELA DE AUTOCADASTRO (Público)
+// ----------------------------------------------------
+
+async function renderAutocadastroScreen() {
+    await loadGlobalConfig(); // Garante que a config está atualizada
+
+    const estadosHtml = globalConfig.estados ? globalConfig.estados.map(e => `<option value="${e.uf} - ${e.name}">${e.uf} - ${e.name}</option>`).join('') : '<option value="">(Cadastre estados em Configurações)</option>';
+
+    appContent.innerHTML = `
+        <div class="flex flex-col justify-center items-center p-4">
+            <div class="bg-white text-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-2xl mt-5">
+                <h2 class="text-2xl font-bold text-center mb-6 text-slate-800">Autocadastro de Colaborador</h2>
+                <p class="text-center text-gray-600 mb-6">Preencha seus dados para iniciar o processo de cadastro. Suas credenciais de login serão exibidas ao final.</p>
+                <form id="autocadastro-form" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Nome Completo -->
+                        <div>
+                            <label for="a-nome" class="block text-sm font-medium text-gray-700">Nome Completo <span class="text-red-500">*</span></label>
+                            <input type="text" id="a-nome" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-green-500 focus:ring-green-500">
+                        </div>
+                        <!-- CPF -->
+                        <div>
+                            <label for="a-cpf" class="block text-sm font-medium text-gray-700">CPF <span class="text-red-500">*</span></label>
+                            <input type="text" id="a-cpf" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-green-500 focus:ring-green-500" pattern="[0-9]{11}" title="Apenas 11 dígitos numéricos">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- RG -->
+                        <div>
+                            <label for="a-rg" class="block text-sm font-medium text-gray-700">RG</label>
+                            <input type="text" id="a-rg" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-green-500 focus:ring-green-500">
+                        </div>
+                        <!-- Data Nascimento -->
+                        <div>
+                            <label for="a-nasc" class="block text-sm font-medium text-gray-700">Data de Nascimento</label>
+                            <input type="date" id="a-nasc" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-green-500 focus:ring-green-500">
+                        </div>
+                    </div>
+
+                    <!-- PIS/NIS -->
+                    <div>
+                        <label for="a-pis" class="block text-sm font-medium text-gray-700">PIS/NIS</label>
+                        <input type="text" id="a-pis" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-green-500 focus:ring-green-500">
+                    </div>
+
+                    <!-- Endereço -->
+                    <div>
+                        <label for="a-end" class="block text-sm font-medium text-gray-700">Endereço (Rua, Número, Bairro) <span class="text-red-500">*</span></label>
+                        <input type="text" id="a-end" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border focus:border-green-500 focus:ring-green-500">
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Estado (UF) -->
+                        <div>
+                            <label for="a-uf" class="block text-sm font-medium text-gray-700">Estado (UF) <span class="text-red-500">*</span></label>
+                            <select id="a-uf" onchange="loadMunicipios(this.value, 'a-mun')" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border bg-white focus:border-green-500 focus:ring-green-500">
+                                <option value="">Selecione a UF</option>
+                                ${estadosHtml}
+                            </select>
+                        </div>
+                        <!-- Município -->
+                        <div>
+                            <label for="a-mun" class="block text-sm font-medium text-gray-700">Município <span class="text-red-500">*</span></label>
+                            <select id="a-mun" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-3 border bg-white focus:border-green-500 focus:ring-green-500" disabled>
+                                <option value="">Selecione o Estado Primeiro</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <p id="autocadastro-message" class="text-sm text-red-500 text-center"></p>
+
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors">
+                        <i class="fa-solid fa-user-check"></i> Finalizar Cadastro
+                    </button>
+                </form>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('autocadastro-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await submitAutocadastro(e.target);
+    });
+}
+
+async function loadMunicipios(ufName, targetSelectId, selectedCity = null) {
+    const ufCode = ufName.split(' - ')[0];
+    const select = document.getElementById(targetSelectId);
+
+    if (!select) return;
+
+    select.innerHTML = '<option value="">Carregando Municípios...</option>';
+    select.disabled = true;
+
+    if (!ufCode) {
+        select.innerHTML = '<option value="">Selecione o Estado Primeiro</option>';
+        return;
+    }
+
+    try {
+        // Simulação de carregamento de municípios
+        // Em um app real, isso buscaria dados de um banco ou API de municípios.
+        const mockMunicipios = {
+            'SP': ['São Paulo', 'Campinas', 'Santos', 'Ribeirão Preto'],
+            'RJ': ['Rio de Janeiro', 'Niterói', 'Duque de Caxias'],
+            'MG': ['Belo Horizonte', 'Contagem', 'Uberlândia', 'Juiz de Fora'],
+            'BA': ['Salvador', 'Feira de Santana', 'Vitória da Conquista'],
+            // Adicione mais estados conforme necessário
+        };
+        const municipios = mockMunicipios[ufCode] || ['Município Mock 1', 'Município Mock 2'];
+
+        let options = '<option value="">Selecione um Município</option>';
+        municipios.forEach(m => {
+            options += `<option value="${m}" ${selectedCity === m ? 'selected' : ''}>${m}</option>`;
+        });
+
+        select.innerHTML = options;
+        select.disabled = false;
+        select.value = selectedCity || ''; // Tenta manter a cidade selecionada se houver
+    } catch (e) {
+        console.error("Erro ao carregar municípios:", e);
+        select.innerHTML = '<option value="">Erro ao Carregar Municípios</option>';
+    }
+}
+
+
+async function submitAutocadastro(form) {
+    const el = document.getElementById('app-content');
+    const msg = document.getElementById('autocadastro-message');
+    const submitButton = form.querySelector('button[type="submit"]');
+
+    msg.textContent = '';
+    submitButton.disabled = true;
+    submitButton.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Cadastrando...`;
+
+    try {
+        const cpfValue = document.getElementById('a-cpf').value;
+
+        // 1. Verificar se o CPF já existe
+        const employeesRef = getColl('employees');
+        const q = query(employeesRef, where('cpf', '==', cpfValue));
+        const querySnapshot = await getDocs(q);
+
+        if (!querySnapshot.empty) {
+            msg.textContent = 'Erro: Este CPF já está cadastrado no sistema.';
+            return;
+        }
+
+        // 2. Gerar credenciais de acesso
+        const nomeValue = document.getElementById('a-nome').value;
+        const baseUser = nomeValue.toLowerCase().split(' ')[0] + cpfValue.slice(-4);
+        const genUser = baseUser.replace(/[^a-z0-9]/g, '');
+        const genPass = generateRandomString(6);
+
         const data = {
-            nomeCompleto: document.getElementById('a-nome').value,
-            cpf: document.getElementById('a-cpf').value,
+            nomeCompleto: nomeValue,
+            cpf: cpfValue,
             rg: document.getElementById('a-rg').value,
             dataNascimento: document.getElementById('a-nasc').value,
             nisPIS: document.getElementById('a-pis').value,
@@ -1541,81 +1703,148 @@ window.submitAutoRegisterForm = async () => {
             municipio: document.getElementById('a-mun').value,
             loginUser: genUser,
             loginPass: genPass,
-            cargo: 'Novo (Aguardando)', // Default
+            cargo: 'Novo (Aguardando)', // Default: aguardando aprovação/edição do gestor
             jornadaHHMM: '08:00',
             createdAt: serverTimestamp()
         };
-        
+
         await addDoc(getColl('employees'), data);
-        
+
+        // 3. Exibir tela de sucesso com as credenciais
         el.innerHTML = `
-            <div class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-2xl text-center mt-20 border border-green-200">
+            <div class="max-w-md mx-auto bg-white p-8 rounded-lg shadow-2xl text-center mt-20 border-t-4 border-green-500">
                 <i class="fa-solid fa-check-circle text-6xl text-green-500 mb-4"></i>
-                <h2 class="text-2xl font-bold text-slate-800">Cadastro Realizado!</h2>
-                <p class="text-gray-600 mt-2 mb-4">Seu cadastro foi enviado para análise. Anote suas credenciais provisórias para acessar o ponto após a aprovação:</p>
-                <div class="bg-gray-100 p-4 rounded mt-4 font-mono text-lg border border-dashed border-gray-400">
-                    <p>Usuário: <b>${genUser}</b></p>
-                    <p>Senha: <b>${genPass}</b></p>
+                <h2 class="text-2xl font-bold text-slate-800">Cadastro Realizado com Sucesso!</h2>
+                <p class="text-gray-600 mt-4">Seu pré-cadastro foi enviado para aprovação. Anote suas credenciais provisórias para a Batida de Ponto:</p>
+                <div class="bg-gray-100 p-4 rounded-lg mt-6 font-mono text-lg border border-dashed border-gray-400 text-left">
+                    <p class="mb-2">Usuário: <b class="text-green-700">${genUser}</b></p>
+                    <p>Senha: <b class="text-green-700">${genPass}</b></p>
                 </div>
-                <p class="text-sm text-red-500 mt-3">É fundamental guardar essas credenciais!</p>
-                <button onclick="router('ponto')" class="mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150">Ir para a página de Ponto</button>
+                <p class="text-sm text-gray-500 mt-4">Use estas credenciais no <a href="?view=point" class="text-blue-600 hover:text-blue-800 font-semibold">Link de Batida de Ponto</a>.</p>
+                <button onclick="window.location.reload()" class="mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors">
+                    Voltar ao Início
+                </button>
             </div>
         `;
 
     } catch (e) {
-        console.error("Erro no autocadastro: ", e);
-        messageEl.textContent = `Erro ao enviar cadastro: ${e.message}`;
-        messageEl.classList.remove('text-gray-600');
-        messageEl.classList.add('text-red-600');
-        messageEl.classList.remove('hidden');
+        console.error("Erro no autocadastro:", e);
+        msg.textContent = `Erro ao finalizar o cadastro: ${e.message}`;
+    } finally {
+        submitButton.disabled = false;
+        submitButton.innerHTML = `<i class="fa-solid fa-user-check"></i> Finalizar Cadastro`;
     }
-};
+}
 
 
-// --- FUNÇÕES DE MODAL CUSTOMIZADO (SUBSTITUI alert/confirm) ---
+// ----------------------------------------------------
+// UTILITÁRIOS GERAIS
+// ----------------------------------------------------
 
-window.showCustomModal = (title, body, confirmText = null, onConfirm = null) => {
-    const modal = document.getElementById('modal-overlay');
-    const modalContent = document.getElementById('modal-content');
-    
-    let buttonsHtml = '';
-    if (confirmText && onConfirm) {
-        // Modal de Confirmação
-        buttonsHtml = `
-            <button onclick="hideModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-150">Cancelar</button>
-            <button id="modal-confirm-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150">${confirmText}</button>
-        `;
+function formatDateBR(dateString) {
+    if (!dateString) return 'N/A';
+    // 'YYYY-MM-DD' -> 'DD/MM/YYYY'
+    const [year, month, day] = dateString.split('-');
+    return `${day}/${month}/${year}`;
+}
+
+
+// ----------------------------------------------------
+// INICIALIZAÇÃO E AUTENTICAÇÃO
+// ----------------------------------------------------
+
+async function setupAndGoToDashboard() {
+    // 1. Inicializa a aplicação
+    document.getElementById('login-screen').classList.add('hidden');
+    document.body.classList.remove('overflow-hidden');
+    isAuthenticated = true;
+
+    // 2. Carrega as configurações globais (cargos, estados, etc.)
+    await loadGlobalConfig();
+
+    // 3. Define a rota inicial
+    const urlParams = new URLSearchParams(window.location.search);
+    const view = urlParams.get('view');
+
+    if (view === 'point') {
+        // Se for a URL pública de ponto, não mostra o sidebar e vai direto para o relógio
+        document.getElementById('sidebar').classList.add('hidden');
+        document.getElementById('main-container').classList.remove('md:ml-64');
+        router('employee-point');
+    } else if (view === 'autocadastro') {
+        // Se for a URL pública de autocadastro, não mostra o sidebar e vai direto para o formulário
+        document.getElementById('sidebar').classList.add('hidden');
+        document.getElementById('main-container').classList.remove('md:ml-64');
+        router('autocadastro');
     } else {
-        // Modal de Alerta
-        buttonsHtml = `<button onclick="hideModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150">OK</button>`;
+        // Se for acesso ao painel de gestão
+        document.getElementById('sidebar').classList.remove('hidden');
+        document.getElementById('main-container').classList.add('md:ml-64');
+        router('dashboard');
     }
-
-    modalContent.innerHTML = `
-        <h3 class="text-xl font-bold mb-4">${title}</h3>
-        <p class="text-gray-700 mb-6">${body}</p>
-        <div class="flex justify-end gap-3">${buttonsHtml}</div>
-    `;
-
-    if (onConfirm) {
-        document.getElementById('modal-confirm-btn').onclick = () => {
-            onConfirm();
-            hideModal(); // Fecha após a ação
-        };
-    }
-
-    modal.classList.remove('hidden');
-    document.getElementById('modal-content-container').classList.remove('hidden');
 }
 
-window.hideModal = () => {
-    document.getElementById('modal-overlay').classList.add('hidden');
-    document.getElementById('modal-content-container').classList.add('hidden');
-    document.getElementById('modal-content').innerHTML = ''; // Limpa o conteúdo
-}
+// Listener para inicialização da autenticação
+onAuthStateChanged(auth, async (user) => {
+    // Se for o token customizado da Canvas, o `user` estará presente
+    if (user) {
+        // Se o usuário já está logado (gestor via token ou colaborador via login de ponto)
+        await setupAndGoToDashboard();
+        return;
+    }
 
+    // Se não há usuário logado e não estamos em uma tela pública (ponto ou autocadastro)
+    const urlParams = new URLSearchParams(window.location.search);
+    const view = urlParams.get('view');
 
-// --- INICIALIZAÇÃO INICIAL APÓS CARREGAMENTO DO HTML ---
-// O router inicial é chamado dentro do onAuthStateChanged.
-// Garantimos que a função 'router' é acessível globalmente
-window.router = router;
-window.loadConfigAndRouter = loadConfigAndRouter;
+    if (view === 'point') {
+        document.getElementById('sidebar').classList.add('hidden');
+        document.getElementById('main-container').classList.remove('md:ml-64');
+        router('employee-point');
+        return;
+    }
+
+    if (view === 'autocadastro') {
+        document.getElementById('sidebar').classList.add('hidden');
+        document.getElementById('main-container').classList.remove('md:ml-64');
+        router('autocadastro');
+        return;
+    }
+
+    // Se estamos na raiz e não logado, mostra tela de login do gestor
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.body.classList.add('overflow-hidden');
+    document.getElementById('app-content').innerHTML = ''; // Limpa o loader
+});
+
+// Inicialização de Auth via token customizado (Se disponível)
+// O canvas fornece um token customizado na variável global __initial_auth_token
+document.addEventListener('DOMContentLoaded', async () => {
+    const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+    const auth = getAuth(app);
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    if (initialAuthToken) {
+        try {
+            // Tenta fazer login com o token customizado para o gestor
+            await signInWithCustomToken(auth, initialAuthToken);
+        } catch (error) {
+            console.error("Erro ao fazer login com token customizado:", error);
+            // Se falhar, tentará o fluxo normal (login anônimo/tela de login) via onAuthStateChanged
+        }
+    } else if (!auth.currentUser) {
+        // Se não há token customizado e não há usuário atual (fluxo normal do firebase),
+        // o onAuthStateChanged irá capturar a ausência de login.
+    }
+
+    // Listener de submissão do formulário de login do Gestor (apenas se não estiver logado)
+    const formLogin = document.getElementById('form-login');
+    if (formLogin) {
+        formLogin.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const user = document.getElementById('l-user').value;
+            const pass = document.getElementById('l-pass').value;
+            login(user, pass);
+        });
+    }
+});
