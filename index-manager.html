@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RH Enterprise - Gestor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-gray-100 font-sans text-gray-800 h-screen flex overflow-hidden">
+
+    <div id="login-screen" class="fixed inset-0 bg-gradient-to-br from-slate-900 to-slate-800 z-50 flex flex-col justify-center items-center text-white p-4">
+        <div class="bg-white text-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-md">
+            <div class="text-center mb-6">
+                <i class="fa-solid fa-lock text-4xl text-slate-800 mb-2"></i>
+                <h2 class="text-2xl font-bold text-slate-800">Acesso Gestor</h2>
+                <p class="text-sm text-gray-500 mt-1">Sistema de Gestão de RH</p>
+            </div>
+            <form id="form-login" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">Usuário</label>
+                    <input type="text" id="login-user" class="w-full border border-gray-300 p-3 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200" placeholder="Digite seu usuário" required>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">Senha</label>
+                    <input type="password" id="login-pass" class="w-full border border-gray-300 p-3 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200" placeholder="Digite sua senha" required>
+                </div>
+                <button type="submit" class="w-full bg-slate-800 text-white py-3 rounded font-bold hover:bg-slate-700 transition duration-200 flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-sign-in-alt"></i> ENTRAR
+                </button>
+            </form>
+            <p id="login-msg" class="mt-4 text-center text-red-500 text-sm hidden"></p>
+            <p class="text-xs text-gray-400 text-center mt-4">Credenciais padrão: admin / 123456</p>
+        </div>
+    </div>
+
+    <aside id="sidebar" class="bg-slate-900 text-white w-64 flex-shrink-0 hidden flex-col transition-all duration-300 z-20 shadow-xl overflow-hidden">
+        <div class="p-4 border-b border-slate-700 flex items-center gap-3">
+            <i class="fa-solid fa-layer-group text-2xl text-blue-400"></i>
+            <div><h1 class="font-bold text-lg">RH Enterprise</h1><p class="text-xs text-slate-400">Gestão Completa</p></div>
+        </div>
+        <nav class="flex-1 p-4 space-y-1 overflow-y-auto text-sm">
+            <button onclick="router('dashboard')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-800 flex gap-3 transition"><i class="fa-solid fa-chart-pie w-5"></i> Dashboard</button>
+            <button onclick="router('rh')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-800 flex gap-3 transition"><i class="fa-solid fa-users w-5"></i> Colaboradores</button>
+            <button onclick="router('relatorios')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-800 flex gap-3 transition"><i class="fa-solid fa-file-contract w-5"></i> Relatórios & Ponto</button>
+            <div class="pt-4 pb-1 text-xs text-slate-500 uppercase font-bold px-4">Administração</div>
+            <button onclick="router('config-company')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-800 flex gap-3 transition"><i class="fa-solid fa-building w-5"></i> Empresa & Logo</button>
+            <button onclick="router('config-struct')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-800 flex gap-3 transition"><i class="fa-solid fa-network-wired w-5"></i> Estrutura & Feriados</button>
+            <button onclick="router('links')" class="nav-item w-full text-left px-4 py-3 rounded hover:bg-slate-800 flex gap-3 transition"><i class="fa-solid fa-link w-5"></i> Links de Acesso</button>
+        </nav>
+        <div class="p-4 border-t border-slate-700">
+            <button onclick="logoutManager()" class="w-full text-left px-4 py-2 text-red-400 hover:text-red-300 transition flex gap-2 items-center">
+                <i class="fa-solid fa-power-off"></i> Sair
+            </button>
+        </div>
+    </aside>
+
+    <main id="main-container" class="flex-1 flex flex-col h-full overflow-hidden w-full relative bg-gray-50">
+        <header id="mobile-header" class="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center shadow">
+            <h1 class="font-bold">RH Enterprise</h1>
+            <button onclick="toggleMobileSidebar()" class="p-2"><i class="fa-solid fa-bars text-xl"></i></button>
+        </header>
+        <div id="app-content" class="flex-1 overflow-y-auto p-4 md:p-8 relative">
+            <div class="flex justify-center mt-20"><div class="loader"></div></div>
+        </div>
+    </main>
+
+    <div id="modal-overlay" class="fixed inset-0 bg-black/50 hidden z-50 flex justify-center items-center p-4 backdrop-blur-sm">
+        <div id="modal-content" class="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto"></div>
+    </div>
+
+    <script type="module" src="script-manager.js"></script>
+</body>
+</html>

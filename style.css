@@ -1,112 +1,20 @@
-/* ==================================================================== */
-/* style.css - AJUSTES PARA MOBILE E IMPRESSÃO */
-/* ==================================================================== */
-
-/* Definições padrão (que podem ser usadas como classes Tailwind) */
-.loader { 
-    border: 3px solid #f3f3f3; 
-    border-top: 3px solid #3b82f6; 
-    border-radius: 50%; 
-    width: 24px; 
-    height: 24px; 
-    animation: spin 1s linear infinite; 
+/* MOBILE-FIRST RESPONSIVE DESIGN */
+* {
+    box-sizing: border-box;
 }
 
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+body {
+    margin: 0;
+    padding: 0;
 }
 
-/* Novo bloco de assinatura */
-.signature-block {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 30px; /* Espaçamento padrão */
-    width: 100%;
-}
-.signature-item {
-    text-align: center;
-    width: 45%; /* Define a largura para posicionar nas extremidades */
-}
-
-/* Estilos de Impressão (Criticamente importantes) */
-@media print {
-    @page { 
-        size: A4; 
-        margin: 10mm; /* Margem da folha A4 */
-    }
-    
-    body { 
-        background: white; 
-        -webkit-print-color-adjust: exact; 
-    }
-    
-    /* Ocultar elementos não imprimíveis */
-    #sidebar, #mobile-header, .no-print, #login-screen { 
-        display: none !important; 
-    }
-    
-    #main-container { 
-        margin: 0 !important; 
-        width: 100% !important; 
-        padding: 0 !important; 
-    }
-    
-    .print-only { 
-        display: block !important; 
-    }
-    
-    /* Tabela de Relatório */
-    table { 
-        width: 100%; 
-        border-collapse: collapse; 
-        font-size: 10px; 
-    }
-    th, td { 
-        border: 1px solid #000; 
-        padding: 3px; 
-    }
-    
-    /* Layout de Assinatura (Ajuste solicitado) */
-    .signature-block {
-        /* Garante que o alinhamento respeita as margens da página */
-        justify-content: space-between !important;
-        padding: 0 !important; 
-        margin-top: 25px !important;
-    }
-    .signature-item {
-        width: 45% !important; /* Força o posicionamento mais próximo das bordas */
-    }
-    
-    /* Estilos de Cabeçalho */
-    .report-header-print {
-        border-bottom: 2px solid #000;
-        padding-bottom: 10px;
-        margin-bottom: 10px;
-    }
-    .report-header-print h1 {
-        font-size: 18px;
-        font-weight: bold;
-    }
-    .report-data-print {
-        font-size: 10px;
-        margin-bottom: 15px;
-    }
-    .report-data-print div {
-        line-height: 1.4;
-    }
-}
-.print-only { display: none; }
-
-/* style.css */
-
-/* 1. Loader CSS */
+/* LOADER ANIMATION */
 .loader {
-    border: 4px solid #f3f3f3; /* Light grey */
-    border-top: 4px solid #3b82f6; /* Blue */
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #3b82f6;
     border-radius: 50%;
-    width: 40px;
-    height: 40px;
+    width: 24px;
+    height: 24px;
     animation: spin 1s linear infinite;
 }
 
@@ -115,19 +23,194 @@
     100% { transform: rotate(360deg); }
 }
 
-/* 2. Estilos para Impressão (Opcional, mas útil para Relatórios) */
+/* CUSTOM SCROLLBAR */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* FOCUS STATES FOR ACCESSIBILITY */
+input:focus,
+select:focus,
+button:focus {
+    outline: none;
+}
+
+/* PRINT STYLES */
 @media print {
-    /* Esconde elementos desnecessários na impressão */
-    #sidebar, 
-    #mobile-header, 
-    #global-alert,
-    #modal-overlay {
+    @page {
+        size: A4;
+        margin: 15mm 10mm 20mm 10mm;
+    }
+
+    body {
+        background: white;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    #sidebar,
+    #mobile-header,
+    #header,
+    .no-print,
+    #login-screen,
+    button:not(.no-print) {
         display: none !important;
     }
-    
-    /* Força o conteúdo principal a ocupar toda a tela */
+
     #main-container {
-        margin-left: 0 !important;
+        margin: 0 !important;
         width: 100% !important;
+        padding: 0 !important;
+        background: white !important;
+    }
+
+    .print-only {
+        display: block !important;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 10px;
+        margin-bottom: 10px;
+    }
+
+    th,
+    td {
+        border: 1px solid #000;
+        padding: 4px;
+        text-align: left;
+    }
+
+    th {
+        background-color: #e5e7eb !important;
+        font-weight: bold;
+    }
+
+    /* REPORT HEADER */
+    .report-header-print {
+        border-bottom: 2px solid #000;
+        padding-bottom: 10px;
+        margin-bottom: 10px;
+    }
+
+    .report-header-print h1 {
+        font-size: 16px;
+        font-weight: bold;
+        margin: 0;
+    }
+
+    .report-header-print h2 {
+        font-size: 12px;
+        margin: 0;
+    }
+
+    /* REPORT DATA */
+    .report-data-print {
+        font-size: 10px;
+        margin-bottom: 15px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .report-data-print div {
+        line-height: 1.5;
+    }
+
+    /* SIGNATURE LINES - POSITIONED NEAR MARGIN */
+    .signature-line {
+        border-top: 1px solid #000;
+        margin-top: 40px;
+        padding-top: 5px;
+        min-height: 20px;
+        text-align: center;
+        font-size: 9px;
+        font-weight: bold;
+    }
+
+    /* PREVENT PAGE BREAKS IN IMPORTANT SECTIONS */
+    table,
+    .report-data-print,
+    .signature-line {
+        page-break-inside: avoid;
+    }
+
+    /* ENSURE PROPER SPACING */
+    h1,
+    h2,
+    h3 {
+        page-break-after: avoid;
+    }
+
+    p {
+        orphans: 3;
+        widows: 3;
+    }
+}
+
+/* RESPONSIVE ADJUSTMENTS */
+@media (max-width: 768px) {
+    #sidebar {
+        position: absolute !important;
+        left: 0;
+        top: 0;
+        height: 100vh;
+        z-index: 30;
+    }
+
+    #sidebar.hidden {
+        display: none !important;
+    }
+
+    .grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    table {
+        font-size: 12px;
+    }
+
+    th,
+    td {
+        padding: 8px 4px;
+    }
+}
+
+/* TABLET AND UP */
+@media (min-width: 768px) {
+    #mobile-header {
+        display: none !important;
+    }
+
+    #sidebar {
+        display: flex !important;
+        position: relative !important;
+        height: auto !important;
+    }
+}
+
+/* DARK MODE SUPPORT (OPTIONAL) */
+@media (prefers-color-scheme: dark) {
+    ::-webkit-scrollbar-thumb {
+        background: #475569;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: #1e293b;
     }
 }

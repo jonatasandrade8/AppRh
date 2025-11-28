@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // CONFIG
 const firebaseConfig = {
@@ -16,620 +16,772 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'rh-enterprise-v3';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const getColl = (c) => collection(db, 'artifacts', appId, 'public', 'data', c);
 
-// CORREÇÃO ESSENCIAL: Garante que o nome da coleção é criado corretamente (ex: rh-enterprise-v3-admins)
-const getColl = (name) => collection(db, `${appId}-${name}`);
+// STATE
+let company = {}, struct = { roles:[], holidays:[], networks:[], stores:[], states:[] };
+let employees = [], isKiosk = false, isAuto = false;
 
-// VARIAVEIS GLOBAIS
-let GLOBAL_USER_DATA = {};
-let GLOBAL_ROLE = 'admin'; // 'admin' ou 'employee'
-const SALT = "a6b9c8d7e5f4g3h2i1j0k9l8m7n6o5p4"; // SALT de segurança (DEVE SER MANTIDO EM SEGREDO EM AMBIENTES REAIS)
+// INIT
+async function init() {
+    const params = new URLSearchParams(window.location.search);
+    isKiosk = params.get('mode') === 'ponto';
+    isAuto = params.get('mode') === 'autocadastro';
 
-// UTILS
-const getEl = (id) => document.getElementById(id);
-const getHash = (pass) => sha256.hmac(SALT, pass); // Usa sha256 (simulação de hashing)
+    if(typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+    else await signInAnonymously(auth);
 
-const formatTime = (minutes) => {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
-};
+    onAuthStateChanged(auth, async (u) => {
+        if(u) {
+            await Promise.all([loadCompany(), loadStruct()]);
+            if(isKiosk) return renderKiosk(document.getElementById('app-content'));
+            if(isAuto) return renderAutoCadastro(document.getElementById('app-content'));
+            
+            // Admin Flow
+            const admins = await getDocs(getColl('admins'));
+            if(admins.empty) await addDoc(getColl('admins'), {user:'admin', pass:'123456'});
+            document.getElementById('login-screen').classList.remove('hidden');
+            document.getElementById('login-screen').classList.add('flex');
+        }
+    });
+}
 
-const calcDailyHours = (registros) => {
-    // Implementação de lógica para calcular o total de horas trabalhadas no dia.
-    // Retorna { minutes: number, batidas: [string] }
-    // ... Lógica omitida para brevidade, mas deve calcular a diferença entre as batidas.
-    // Exemplo: Batidas [08:00, 12:00, 13:00, 17:00] -> 4h + 4h = 8h.
-    return { minutes: 480, batidas: ['08:00', '12:00', '13:00', '17:00'] }; 
-};
+// --- DATA LOADERS ---
+async function loadCompany() {
+    const snap = await getDocs(getColl('config'));
+    company = snap.empty ? {nome:'Minha Empresa', logo:''} : {id:snap.docs[0].id, ...snap.docs[0].data()};
+}
+async function loadStruct() {
+    // Load structure collections
+    const load = async (k) => {
+        const s = await getDocs(getColl(k));
+        struct[k] = s.docs.map(d=>({id:d.id, ...d.data()}));
+    };
+    await Promise.all(['roles','holidays','networks','stores','states'].map(load));
+}
 
-// --- AUTENTICAÇÃO E ROTEAMENTO ---
-
-const toggleLoginRole = () => {
-    const roleInput = getEl('login-role');
-    const title = getEl('login-title');
-    const btn = getEl('login-btn');
-    const toggleBtn = getEl('login-screen').querySelector('button[onclick="toggleLoginRole()"]');
-
-    if (roleInput.value === 'admin') {
-        roleInput.value = 'employee';
-        title.textContent = 'Acesso Colaborador / Ponto';
-        btn.textContent = 'Acessar Ponto';
-        toggleBtn.textContent = 'Acessar como Gestor';
+// --- ADMIN AUTH ---
+document.getElementById('form-login').onsubmit = async (e) => {
+    e.preventDefault();
+    const u = document.getElementById('login-user').value;
+    const p = document.getElementById('login-pass').value;
+    const q = query(getColl('admins'), where('user','==',u), where('pass','==',p));
+    const snap = await getDocs(q);
+    if(!snap.empty) {
+        document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('sidebar').classList.remove('hidden');
+        document.getElementById('sidebar').classList.add('flex');
+        router('dashboard');
     } else {
-        roleInput.value = 'admin';
-        title.textContent = 'Acesso Gestor';
-        btn.textContent = 'Entrar';
-        toggleBtn.textContent = 'Acessar como Colaborador/Ponto';
-    }
-}
-
-const loginUser = async () => {
-    const user = getEl('login-user').value;
-    const pass = getEl('login-pass').value;
-    const role = getEl('login-role').value;
-    const messageEl = getEl('login-message');
-    
-    messageEl.textContent = 'Verificando credenciais...';
-
-    // 1. Geração do HASH da senha digitada
-    const hashedPass = getHash(pass); // <-- ESSENCIAL
-
-    let collName = role === 'admin' ? 'admins' : 'employees';
-    
-    // 2. Consulta de Segurança (Busca por loginUser E hashedPass)
-    try {
-        // CORREÇÃO: Busca por usuário E senha com hash
-        // NOTA: Para o Admin funcionar, os campos no Firestore devem ser 'loginUser' e 'loginPass'
-        const q = query(
-            getColl(collName), 
-            where('loginUser', '==', user),
-            where('loginPass', '==', hashedPass) // <-- VALIDAÇÃO CRÍTICA DO HASH AQUI
-        );
-        const snapshot = await getDocs(q);
-
-        if (snapshot.empty) {
-            messageEl.textContent = 'Usuário ou senha inválidos.';
-            return;
-        }
-
-        // Se encontrou o documento, as credenciais são válidas.
-        const userData = snapshot.docs[0].data();
-        
-        // Sucesso!
-        GLOBAL_USER_DATA = { id: snapshot.docs[0].id, ...userData };
-        GLOBAL_ROLE = role;
-        getEl('user-role-display').textContent = role === 'admin' ? 'Gestor' : 'Colaborador';
-        getEl('login-screen').classList.add('hidden');
-        router(role === 'admin' ? 'dashboard' : 'employee-history');
-
-    } catch (error) {
-        console.error("Erro no login:", error);
-        messageEl.textContent = 'Ocorreu um erro ao tentar logar.';
+        document.getElementById('login-msg').innerText = "Credenciais inválidas";
+        document.getElementById('login-msg').classList.remove('hidden');
     }
 };
 
-const checkAuth = async () => {
-    getEl('login-screen').classList.remove('hidden');
-
-    // Tenta autenticar anonimamente
-    try {
-        await signInAnonymously(auth);
-    } catch (e) {
-        console.error("Erro na autenticação anônima:", e);
+// --- ROUTER ---
+window.router = async (view) => {
+    const el = document.getElementById('app-content');
+    el.innerHTML = '<div class="flex justify-center mt-20"><div class="loader"></div></div>';
+    if(window.innerWidth < 768) document.getElementById('sidebar').classList.add('hidden');
+    
+    switch(view) {
+        case 'dashboard': renderDashboard(el); break;
+        case 'rh': await renderRH(el); break;
+        case 'relatorios': await renderReports(el); break;
+        case 'config-company': renderConfigCompany(el); break;
+        case 'config-struct': renderConfigStruct(el); break;
+        case 'links': renderLinks(el); break;
     }
 };
 
-const router = (route) => {
-    // Lógica para esconder/mostrar o sidebar e mudar o conteúdo principal.
-    getEl('sidebar').classList.add('hidden', 'absolute'); // Esconde o menu em mobile
-    
-    // Ajuste de permissões
-    if (GLOBAL_ROLE === 'employee' && route !== 'employee-history') {
-        alert("Acesso negado. Colaboradores só podem ver seu histórico.");
-        route = 'employee-history';
-    } else if (GLOBAL_ROLE === 'admin' && route === 'employee-history') {
-        route = 'dashboard';
-    }
+// --- MODULES ---
 
-    // Limpar o conteúdo
-    getEl('app-content').innerHTML = '<div class="flex justify-center mt-20"><div class="loader"></div></div>';
-    
-    // Roteamento
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    
-    if (route === 'dashboard') {
-        getEl('nav-dashboard').classList.add('active');
-        renderDashboard();
-    } else if (route === 'rh') {
-        getEl('nav-rh').classList.add('active');
-        renderRH();
-    } else if (route === 'reports') {
-        getEl('nav-reports').classList.add('active');
-        renderReports();
-    } else if (route === 'config') {
-        getEl('nav-config').classList.add('active');
-        renderConfig();
-    } else if (route === 'links') {
-        getEl('nav-links').classList.add('active');
-        renderLinks();
-    } else if (route === 'employee-history') {
-        // NOVO: Rota para Colaborador (Histórico)
-        renderEmployeeHistory();
-    }
-}
-
-// --- RENDERING VIEWS ---
-
-// NOVO: View para o Histórico Pessoal do Colaborador
-const renderEmployeeHistory = async () => {
-    const employee = GLOBAL_USER_DATA;
-    getEl('app-content').innerHTML = `
-        <h2 class="text-3xl font-bold mb-6 text-slate-700">Meu Histórico de Ponto</h2>
-        <p class="text-lg mb-4">Olá, **${employee.nomeCompleto}**.</p>
-        <div class="bg-white shadow-lg rounded-lg p-6">
-            <h3 class="text-xl font-semibold mb-4">Pontos do Mês Atual</h3>
-            <div id="history-table-container" class="table-responsive-employee">
-                <p>Carregando histórico...</p>
+// 1. DASHBOARD
+async function renderDashboard(el) {
+    const snap = await getDocs(getColl('employees'));
+    const total = snap.size;
+    el.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="bg-white p-6 rounded shadow border-l-4 border-blue-500">
+                <h3 class="text-gray-500 text-sm font-bold uppercase">Total Colaboradores</h3>
+                <p class="text-3xl font-bold text-slate-800">${total}</p>
+            </div>
+            <div class="bg-white p-6 rounded shadow border-l-4 border-green-500">
+                <h3 class="text-gray-500 text-sm font-bold uppercase">Lojas Cadastradas</h3>
+                <p class="text-3xl font-bold text-slate-800">${struct.stores.length}</p>
+            </div>
+            <div class="bg-white p-6 rounded shadow border-l-4 border-purple-500">
+                <h3 class="text-gray-500 text-sm font-bold uppercase">Redes</h3>
+                <p class="text-3xl font-bold text-slate-800">${struct.networks.length}</p>
+            </div>
+        </div>
+        <div class="mt-8 bg-white p-6 rounded shadow">
+            <h3 class="font-bold mb-4">Acesso Rápido</h3>
+            <div class="flex gap-4">
+                <button onclick="router('rh')" class="bg-blue-100 text-blue-700 px-4 py-2 rounded hover:bg-blue-200">Gerenciar Equipe</button>
+                <button onclick="router('config-struct')" class="bg-purple-100 text-purple-700 px-4 py-2 rounded hover:bg-purple-200">Cadastrar Lojas/Cargos</button>
             </div>
         </div>
     `;
-
-    try {
-        // Consulta: Registros de ponto do colaborador logado
-        const q = query(getColl('registros_ponto'), where('userId', '==', employee.id), orderBy('timestamp', 'desc'));
-        const snapshot = await getDocs(q);
-        
-        const monthlyData = {};
-
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            const date = new Date(data.timestamp.toDate()).toLocaleDateString('pt-BR');
-            
-            if (!monthlyData[date]) {
-                monthlyData[date] = [];
-            }
-            monthlyData[date].push(new Date(data.timestamp.toDate()).toLocaleTimeString('pt-BR'));
-        });
-
-        let tableHTML = `<table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
-                <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Batidas (Horário)</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Horas Trabalhadas</th>
-                </tr>
-            </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
-        `;
-        
-        for (const date in monthlyData) {
-            const batidas = monthlyData[date].sort();
-            const { minutes } = calcDailyHours(batidas); // Reutiliza a função de cálculo
-            
-            tableHTML += `
-                <tr>
-                    <td class="px-6 py-4 whitespace-nowrap">${date}</td>
-                    <td class="px-6 py-4 whitespace-nowrap">${batidas.join(' - ')}</td>
-                    <td class="px-6 py-4 whitespace-nowrap">${formatTime(minutes)}</td>
-                </tr>
-            `;
-        }
-        
-        tableHTML += `</tbody></table>`;
-        getEl('history-table-container').innerHTML = tableHTML;
-        
-    } catch (e) {
-        console.error("Erro ao carregar histórico:", e);
-        getEl('history-table-container').innerHTML = `<p class="text-red-500">Não foi possível carregar o histórico. Tente novamente.</p>`;
-    }
 }
 
-// NOVO: Dashboard do Gestor (Métricas)
-const renderDashboard = async () => {
-    getEl('app-content').innerHTML = `
-        <h2 class="text-3xl font-bold mb-6 text-slate-700">Dashboard de Gestão</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6" id="dashboard-stats">
-            </div>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div id="aniversariantes-card" class="bg-white shadow-lg rounded-lg p-6">
-                <h3 class="text-xl font-semibold mb-4 text-blue-600"><i class="fa-solid fa-gift mr-2"></i> Aniversariantes do Mês</h3>
-                <ul id="aniversariantes-list" class="space-y-2"><li>Carregando...</li></ul>
-            </div>
-            <div id="banco-horas-card" class="bg-white shadow-lg rounded-lg p-6">
-                <h3 class="text-xl font-semibold mb-4 text-orange-600"><i class="fa-solid fa-clock mr-2"></i> Saldo de Banco de Horas (Crítico)</h3>
-                <p class="text-sm text-gray-500 mb-3">Colaboradores com maior saldo devedor ou credor.</p>
-                <ul id="banco-horas-list" class="space-y-2"><li>Carregando...</li></ul>
-            </div>
-            <div id="ferias-card" class="bg-white shadow-lg rounded-lg p-6 col-span-full">
-                <h3 class="text-xl font-semibold mb-4 text-green-600"><i class="fa-solid fa-plane-departure mr-2"></i> Férias Programadas (Próximos 3 meses)</h3>
-                <ul id="ferias-list" class="space-y-2"><li>Carregando...</li></ul>
-            </div>
-        </div>
-    `;
-    
-    const today = new Date();
-    const currentMonth = today.getMonth() + 1; // Mês atual (1-12)
-    const nextThreeMonths = [(today.getMonth() + 1) % 12 + 1, (today.getMonth() + 2) % 12 + 1, (today.getMonth() + 3) % 12 + 1];
-
-    try {
-        const q = query(getColl('employees'));
-        const snapshot = await getDocs(q);
-        const employees = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        // 1. Aniversariantes
-        const aniversariantes = employees.filter(emp => {
-            if (!emp.dataNascimento) return false;
-            const month = parseInt(emp.dataNascimento.split('-')[1]);
-            return month === currentMonth;
-        });
-        
-        getEl('aniversariantes-list').innerHTML = aniversariantes.length > 0
-            ? aniversariantes.map(emp => `<li><i class="fa-solid fa-cake-candles text-pink-500"></i> ${emp.nomeCompleto} (${emp.dataNascimento.split('-')[2]}/${emp.dataNascimento.split('-')[1]})</li>`).join('')
-            : '<li>Nenhum aniversariante neste mês.</li>';
-
-        // 2. Férias (Simulação - assumindo campo 'feriasInicio' e 'feriasFim' em 'employees')
-        const ferias = employees.filter(emp => {
-            if (!emp.feriasInicio) return false;
-            const feriasMonth = new Date(emp.feriasInicio).getMonth() + 1;
-            return nextThreeMonths.includes(feriasMonth);
-        });
-
-        getEl('ferias-list').innerHTML = ferias.length > 0
-            ? ferias.map(emp => `<li><i class="fa-solid fa-calendar-alt text-teal-500"></i> ${emp.nomeCompleto}: ${new Date(emp.feriasInicio).toLocaleDateString()} a ${new Date(emp.feriasFim).toLocaleDateString()}</li>`).join('')
-            : '<li>Nenhum colaborador com férias agendadas nos próximos 3 meses.</li>';
-
-        // 3. Banco de Horas (Simulação - requer dados de ponto e lógica de saldo)
-        // Para uma implementação completa, seria necessário consultar 'registros_ponto' para cada funcionário.
-        getEl('banco-horas-list').innerHTML = `
-            <li><i class="fa-solid fa-arrow-down text-red-500"></i> **João da Silva**: -15:30h (Ajustar até o dia 30/11)</li>
-            <li><i class="fa-solid fa-arrow-up text-green-500"></i> **Maria Souza**: +20:00h (Ajustar até o dia 30/11)</li>
-        `;
-        
-    } catch (e) {
-        console.error("Erro ao carregar Dashboard:", e);
-        getEl('app-content').innerHTML += `<p class="text-red-500">Erro ao carregar dados do dashboard.</p>`;
-    }
-};
-
-// ... (Outras funções de renderização como renderConfig, renderLinks, openModal, etc., são omitidas por serem muito longas e menos modificadas) ...
-
-// RENDER RH (Gestão de Colaboradores)
-const renderRH = async () => {
-    // ... HTML para a tela RH (busca e cadastro) ...
-    getEl('app-content').innerHTML = `
-        <h2 class="text-3xl font-bold mb-6 text-slate-700">Gestão de Colaboradores</h2>
-        <div class="bg-white shadow-lg rounded-lg p-6 mb-6">
-            <h3 class="text-xl font-semibold mb-4">Filtros de Busca</h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <select id="filter-estado" class="block w-full px-3 py-2 border border-gray-300 rounded-md">
-                    <option value="">Filtrar por Estado</option>
-                </select>
-                <select id="filter-cargo" class="block w-full px-3 py-2 border border-gray-300 rounded-md">
-                    <option value="">Filtrar por Cargo</option>
-                </select>
-                <button onclick="applyRHFilters()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md"><i class="fa-solid fa-filter"></i> Aplicar Filtros</button>
-            </div>
-        </div>
-        <div class="flex justify-between items-center mb-4">
-            <h3 class="text-xl font-semibold">Lista de Colaboradores</h3>
-            <button onclick="openEmpModal(null)" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md"><i class="fa-solid fa-plus"></i> Novo Cadastro</button>
-        </div>
-        <div id="rh-list-container" class="bg-white shadow-lg rounded-lg p-6">
-            <p>Carregando colaboradores...</p>
-        </div>
-    `;
-
-    // Carrega dados de estrutura para filtros
-    // ...
-
-    listRH();
-};
-
-const applyRHFilters = () => {
-    // Função de filtro simples. Requer lógica mais complexa para consulta ao Firestore (query, where)
-    listRH(getEl('filter-estado').value, getEl('filter-cargo').value);
-}
-
-const listRH = async (estado = '', cargo = '') => {
-    const container = getEl('rh-list-container');
-    container.innerHTML = '<div class="flex justify-center"><div class="loader"></div></div>';
-
-    try {
-        let q;
-        let queryArgs = [];
-
-        if (estado) queryArgs.push(where('estado', '==', estado));
-        if (cargo) queryArgs.push(where('cargo', '==', cargo));
-        
-        // NOVO: Ordena por nome completo
-        queryArgs.push(orderBy('nomeCompleto', 'asc'));
-
-        q = query(getColl('employees'), ...queryArgs);
-        
-        const snapshot = await getDocs(q);
-        
-        // ... (Renderização da tabela de colaboradores) ...
-        let tableHTML = `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-200">
-            <tbody class="bg-white divide-y divide-gray-200">`;
-
-        snapshot.forEach(doc => {
-            const emp = doc.data();
-            // ... (linhas da tabela) ...
-        });
-        
-        tableHTML += `</tbody></table></div>`;
-        container.innerHTML = tableHTML;
-
-    } catch (e) {
-        console.error("Erro ao listar RH:", e);
-        container.innerHTML = `<p class="text-red-500">Erro ao carregar lista de colaboradores.</p>`;
-    }
-}
-
-const openEmpModal = async (id) => {
-    let empData = {};
-    if (id) {
-        // Carrega dados para edição
-        // ...
-    }
-    
-    const modalContent = getEl('modal-content');
-    modalContent.innerHTML = `
-        <form id="form-emp" onsubmit="event.preventDefault(); saveEmployee('${id || ''}')" class="p-6">
-            <h3 class="text-2xl font-bold mb-4">${id ? 'Editar Colaborador' : 'Novo Colaborador'}</h3>
-            <div class="mb-4">
-                <label for="a-admissao" class="block text-sm font-medium text-gray-700">Data de Admissão</label>
-                <input type="date" id="a-admissao" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
-            </div>
-
-            <div class="mb-6 border p-4 rounded-md">
-                <h4 class="text-lg font-semibold mb-3">Critérios de Ponto</h4>
-                <div class="mb-3">
-                    <label class="block text-sm font-medium text-gray-700">Batidas Padrão:</label>
-                    <select id="a-batidas-padrao" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
-                        <option value="2">2 Batidas (Início / Fim Jornada)</option>
-                        <option value="4">4 Batidas (Início / Pausa / Retorno / Fim)</option>
-                    </select>
+// 2. CONFIG COMPANY (LOGO FILE)
+function renderConfigCompany(el) {
+    el.innerHTML = `
+        <div class="bg-white p-6 rounded shadow max-w-2xl mx-auto">
+            <h2 class="text-xl font-bold mb-4">Dados da Empresa</h2>
+            <div class="space-y-4">
+                <input id="c-nome" value="${company.nome||''}" class="w-full border p-2 rounded" placeholder="Razão Social">
+                <input id="c-cnpj" value="${company.cnpj||''}" class="w-full border p-2 rounded" placeholder="CNPJ">
+                
+                <div>
+                    <label class="block text-sm font-bold mb-1">Logomarca</label>
+                    <input type="file" id="c-logo-file" accept="image/*" class="w-full border p-1 rounded bg-gray-50 text-sm">
+                    <p class="text-xs text-gray-500 mt-1">Recomendado: PNG/JPG até 100KB.</p>
+                    ${company.logo ? `<img src="${company.logo}" class="h-16 mt-2 border p-1 rounded">` : ''}
                 </div>
-                <div class="flex items-center">
-                    <input id="a-selfie-obrigatoria" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
-                    <label for="a-selfie-obrigatoria" class="ml-2 block text-sm font-medium text-gray-700">Selfie Obrigatória na Batida</label>
-                </div>
-            </div>
 
-            <div class="flex justify-end gap-2">
-                <button type="button" onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-md">Cancelar</button>
-                <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md">Salvar</button>
+                <button onclick="saveCompany()" class="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 w-full">Salvar</button>
             </div>
-        </form>
+        </div>
     `;
-    // ... (Lógica de preenchimento de campos) ...
-    openModal();
 }
 
-const saveEmployee = async (id) => {
-    const el = getEl('form-emp');
+window.saveCompany = async () => {
+    const file = document.getElementById('c-logo-file').files[0];
+    let logoBase64 = company.logo || "";
     
-    // NOVO: Adiciona a Data de Admissão e Critérios de Ponto
+    if(file) {
+        if(file.size > 100000) return alert('Imagem muito grande! Use arquivo menor que 100KB.');
+        logoBase64 = await new Promise(r => {
+            const reader = new FileReader();
+            reader.onload = () => r(reader.result);
+            reader.readAsDataURL(file);
+        });
+    }
+
     const data = {
-        // ... Campos existentes (nomeCompleto, cpf, etc.)
-        dataAdmissao: getEl('a-admissao').value,
-        batidasPadrao: getEl('a-batidas-padrao').value,
-        selfieObrigatoria: getEl('a-selfie-obrigatoria').checked,
-        // ...
-        jornadaHHMM: '08:00'
+        nome: document.getElementById('c-nome').value,
+        cnpj: document.getElementById('c-cnpj').value,
+        logo: logoBase64
     };
 
-    if (!id) {
-        // NOVO: Geração de credenciais com HASH
-        const genUser = 'user' + Math.random().toString(36).substring(2, 8);
-        const genPass = Math.random().toString(36).substring(2, 6).slice(-6);
-        data.loginUser = genUser;
-        data.loginPass = getHash(genPass); // **Importante: Hashing da senha!**
+    if(company.id) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', company.id), data);
+    else await addDoc(getColl('config'), data);
+    
+    await loadCompany();
+    alert('Salvo!');
+    router('config-company');
+};
 
-        await addDoc(getColl('employees'), data);
+// 3. CONFIG STRUCTURE (TABS)
+function renderConfigStruct(el) {
+    el.innerHTML = `
+        <div class="bg-white p-6 rounded shadow h-full flex flex-col">
+            <h2 class="text-xl font-bold mb-6">Estrutura Operacional</h2>
+            <div class="flex border-b mb-4 text-sm">
+                <button onclick="openTab('tab-est')" class="px-4 py-2 border-b-2 border-blue-500 font-bold tab-btn">Estados</button>
+                <button onclick="openTab('tab-carg')" class="px-4 py-2 border-b-2 border-transparent hover:border-gray-300 tab-btn">Cargos</button>
+                <button onclick="openTab('tab-rede')" class="px-4 py-2 border-b-2 border-transparent hover:border-gray-300 tab-btn">Redes & Lojas</button>
+                <button onclick="openTab('tab-fer')" class="px-4 py-2 border-b-2 border-transparent hover:border-gray-300 tab-btn">Feriados</button>
+            </div>
+
+            <div id="tab-est" class="tab-content">${renderSimpleCRUD('states', 'Estado (UF)', 'UF ex: SP, RJ')}</div>
+            <div id="tab-carg" class="tab-content hidden">${renderSimpleCRUD('roles', 'Cargo', 'Nome do Cargo')}</div>
+            <div id="tab-rede" class="tab-content hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div><h4 class="font-bold text-sm mb-2 text-purple-600">Redes</h4>${renderSimpleCRUD('networks', 'Rede', 'Nome da Rede')}</div>
+                    <div><h4 class="font-bold text-sm mb-2 text-green-600">Lojas</h4>${renderStoreCRUD()}</div>
+                </div>
+            </div>
+            <div id="tab-fer" class="tab-content hidden">${renderHolidayCRUD()}</div>
+        </div>
+    `;
+}
+
+window.openTab = (tid) => {
+    document.querySelectorAll('.tab-content').forEach(d => d.classList.add('hidden'));
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('border-blue-500','font-bold'); b.classList.add('border-transparent'); });
+    document.getElementById(tid).classList.remove('hidden');
+    event.target.classList.add('border-blue-500','font-bold');
+    event.target.classList.remove('border-transparent');
+}
+
+// --- CRUD HELPERS ---
+function renderSimpleCRUD(coll, label, ph) {
+    const list = struct[coll].map(i => `
+        <li class="flex justify-between bg-gray-50 p-2 rounded mb-1 text-sm">
+            ${i.name} <button onclick="delStruct('${coll}','${i.id}')" class="text-red-500"><i class="fa-solid fa-times"></i></button>
+        </li>`).join('');
+    return `
+        <div class="flex gap-2 mb-2">
+            <input id="new-${coll}" class="border p-2 rounded w-full text-sm" placeholder="${ph}">
+            <button onclick="addStruct('${coll}')" class="bg-blue-600 text-white px-3 rounded"><i class="fa-solid fa-plus"></i></button>
+        </div>
+        <ul class="max-h-60 overflow-y-auto">${list}</ul>
+    `;
+}
+
+function renderStoreCRUD() {
+    const list = struct.stores.map(s => `
+        <li class="flex justify-between bg-gray-50 p-2 rounded mb-1 text-sm">
+            <div><b>${s.name}</b> <span class="text-xs text-gray-500">(${s.network}) - ${s.city}/${s.state}</span></div>
+            <button onclick="delStruct('stores','${s.id}')" class="text-red-500"><i class="fa-solid fa-times"></i></button>
+        </li>`).join('');
+    return `
+        <div class="space-y-2 mb-2 bg-gray-50 p-3 rounded">
+            <input id="store-name" class="border p-1 w-full text-sm" placeholder="Nome Loja">
+            <select id="store-net" class="border p-1 w-full text-sm"><option value="">Rede...</option>${struct.networks.map(n=>`<option>${n.name}</option>`).join('')}</select>
+            <div class="flex gap-1">
+                <select id="store-uf" class="border p-1 w-1/3 text-sm"><option value="">UF</option>${struct.states.map(s=>`<option>${s.name}</option>`).join('')}</select>
+                <input id="store-city" class="border p-1 w-2/3 text-sm" placeholder="Município">
+            </div>
+            <button onclick="addStore()" class="bg-green-600 text-white w-full py-1 rounded text-sm">Adicionar Loja</button>
+        </div>
+        <ul class="max-h-60 overflow-y-auto">${list}</ul>
+    `;
+}
+
+function renderHolidayCRUD() {
+    const list = struct.holidays.map(h => `
+        <li class="flex justify-between bg-gray-50 p-2 rounded mb-1 text-sm border-l-4 ${h.type==='Nacional'?'border-red-500':'border-orange-400'}">
+            <div><b>${h.date}</b> - ${h.name} <span class="text-xs">(${h.type} ${h.scope||''})</span></div>
+            <button onclick="delStruct('holidays','${h.id}')" class="text-red-500"><i class="fa-solid fa-times"></i></button>
+        </li>`).join('');
+    return `
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-2 mb-4 bg-gray-50 p-3 rounded items-end">
+            <div><label class="text-xs">Data</label><input type="date" id="hol-date" class="border p-1 w-full text-sm"></div>
+            <div><label class="text-xs">Nome</label><input id="hol-name" class="border p-1 w-full text-sm"></div>
+            <div><label class="text-xs">Tipo</label><select id="hol-type" class="border p-1 w-full text-sm"><option>Nacional</option><option>Estadual</option><option>Municipal</option></select></div>
+            <div><label class="text-xs">Escopo (UF/Mun)</label><input id="hol-scope" class="border p-1 w-full text-sm" placeholder="Ex: SP ou Campinas"></div>
+        </div>
+        <button onclick="addHoliday()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm w-full mb-2">Salvar Feriado</button>
+        <ul class="max-h-60 overflow-y-auto">${list}</ul>
+    `;
+}
+
+window.addStruct = async (coll) => {
+    const val = document.getElementById('new-'+coll).value;
+    if(!val) return;
+    await addDoc(getColl(coll), {name:val});
+    await loadStruct(); router('config-struct');
+};
+window.addStore = async () => {
+    const name = document.getElementById('store-name').value;
+    const net = document.getElementById('store-net').value;
+    const uf = document.getElementById('store-uf').value;
+    const city = document.getElementById('store-city').value;
+    if(!name || !net) return alert('Preencha Nome e Rede');
+    await addDoc(getColl('stores'), {name, network:net, state:uf, city});
+    await loadStruct(); router('config-struct');
+};
+window.addHoliday = async () => {
+    const d = document.getElementById('hol-date').value;
+    const n = document.getElementById('hol-name').value;
+    const t = document.getElementById('hol-type').value;
+    const s = document.getElementById('hol-scope').value;
+    if(!d || !n) return;
+    // Store date as MD (MM-DD) for recurrence or YYYY-MM-DD for specific? 
+    // Simplified: Store YYYY-MM-DD for now.
+    await addDoc(getColl('holidays'), {date:d, name:n, type:t, scope:s});
+    await loadStruct(); router('config-struct');
+};
+window.delStruct = async (c, id) => { if(confirm('Apagar?')) { await deleteDoc(doc(db,'artifacts',appId,'public','data',c,id)); await loadStruct(); router('config-struct'); }};
+
+// 4. RH (COLABORADORES)
+async function renderRH(el) {
+    const snap = await getDocs(getColl('employees'));
+    employees = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    
+    el.innerHTML = `
+        <div class="bg-white rounded shadow p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">Colaboradores</h2>
+                <button onclick="openEmpModal()" class="bg-green-600 text-white px-4 py-2 rounded flex gap-2 items-center"><i class="fa-solid fa-plus"></i> Novo Cadastro</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-gray-100 uppercase">
+                        <tr><th class="p-3">Nome/CPF</th><th class="p-3">Cargo</th><th class="p-3">Local</th><th class="p-3">Acesso</th><th class="p-3">Ação</th></tr>
+                    </thead>
+                    <tbody>
+                        ${employees.map(e => `
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="p-3">
+                                <div class="font-bold">${e.nomeCompleto}</div>
+                                <div class="text-xs text-gray-500">${e.cpf}</div>
+                            </td>
+                            <td class="p-3">${e.cargo}</td>
+                            <td class="p-3">${e.municipio}/${e.estado}</td>
+                            <td class="p-3 font-mono text-xs">U: ${e.loginUser}<br>S: ${e.loginPass}</td>
+                            <td class="p-3">
+                                <button onclick="openEmpModal('${e.id}')" class="text-blue-600 mr-2"><i class="fa-solid fa-pen"></i></button>
+                                <button onclick="delEmp('${e.id}')" class="text-red-600"><i class="fa-solid fa-trash"></i></button>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+window.openEmpModal = (id) => {
+    const emp = id ? employees.find(e => e.id===id) : {};
+    const isEdit = !!id;
+    
+    // Random Creds Gen
+    const genUser = emp.loginUser || `user${Math.floor(Math.random()*9000)+1000}`;
+    const genPass = emp.loginPass || Math.random().toString(36).slice(-6);
+
+    document.getElementById('modal-content').innerHTML = `
+        <div class="p-6 bg-white">
+            <h2 class="text-xl font-bold mb-4 border-b pb-2">${isEdit ? 'Editar' : 'Novo'} Colaborador</h2>
+            <form id="form-emp" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                
+                <div class="md:col-span-3 font-bold text-blue-600 mt-2">Dados Pessoais</div>
+                <input id="e-nome" value="${emp.nomeCompleto||''}" class="border p-2 rounded" placeholder="Nome Completo" required>
+                <input id="e-nasc" value="${emp.dataNascimento||''}" type="date" class="border p-2 rounded">
+                <input id="e-cpf" value="${emp.cpf||''}" class="border p-2 rounded" placeholder="CPF">
+                <input id="e-rg" value="${emp.rg||''}" class="border p-2 rounded" placeholder="RG">
+                <input id="e-pis" value="${emp.nisPIS||''}" class="border p-2 rounded" placeholder="NIS/PIS">
+                
+                <div class="md:col-span-3 font-bold text-blue-600 mt-2">Endereço</div>
+                <input id="e-end" value="${emp.endereco||''}" class="border p-2 rounded md:col-span-2" placeholder="Logradouro, Nº, Bairro">
+                <select id="e-uf" class="border p-2 rounded" onchange="renderHolidayMsg()">
+                    <option value="">Estado</option>
+                    ${struct.states.map(s => `<option ${s.name===emp.estado?'selected':''}>${s.name}</option>`).join('')}
+                </select>
+                <input id="e-mun" value="${emp.municipio||''}" class="border p-2 rounded" placeholder="Município">
+
+                <div class="md:col-span-3 font-bold text-blue-600 mt-2">Profissional & Acesso</div>
+                <div>
+                    <label class="text-xs">Cargo</label>
+                    <select id="e-cargo" class="w-full border p-2 rounded" onchange="toggleStoreSelect()">
+                        <option value="">Selecione...</option>
+                        ${struct.roles.map(r => `<option ${r.name===emp.cargo?'selected':''}>${r.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs">Jornada (HH:mm)</label>
+                    <input type="time" id="e-jornada" value="${emp.jornadaHHMM||'08:00'}" class="w-full border p-2 rounded">
+                </div>
+                <div class="bg-gray-100 p-2 rounded text-xs font-mono">
+                    <div class="font-bold text-gray-500">Credenciais (Auto)</div>
+                    <div>User: <span id="view-user">${genUser}</span></div>
+                    <div>Pass: <span id="view-pass">${genPass}</span></div>
+                </div>
+
+                <div class="md:col-span-3 bg-gray-50 p-4 rounded border">
+                    <label class="font-bold text-sm block mb-2">Vínculo de Lojas/Redes</label>
+                    <div id="store-selector" class="max-h-40 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                        <p class="text-gray-500 italic">Selecione um cargo primeiro.</p>
+                    </div>
+                </div>
+
+                <div class="md:col-span-3 flex justify-end gap-3 mt-4 border-t pt-4">
+                    <button type="button" onclick="document.getElementById('modal-overlay').classList.add('hidden')" class="px-4 py-2 bg-gray-300 rounded">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded font-bold">Salvar</button>
+                </div>
+            </form>
+        </div>
+    `;
+    document.getElementById('modal-overlay').classList.remove('hidden');
+    
+    // Populate Store logic
+    window.toggleStoreSelect = () => {
+        const cargo = document.getElementById('e-cargo').value.toLowerCase();
+        const container = document.getElementById('store-selector');
+        const isRoteirista = cargo.includes('roteirista');
+        const savedStores = emp.storeIds || [];
+
+        if(!cargo) { container.innerHTML = ''; return; }
+
+        container.innerHTML = struct.stores.map(s => `
+            <label class="flex items-center gap-2 p-1 hover:bg-white rounded">
+                <input type="${isRoteirista ? 'checkbox' : 'radio'}" name="sel_stores" value="${s.id}" ${savedStores.includes(s.id)?'checked':''}>
+                <span><b>${s.name}</b> (${s.network})</span>
+            </label>
+        `).join('');
+    };
+    // Init store selector
+    if(emp.cargo) toggleStoreSelect();
+
+    document.getElementById('form-emp').onsubmit = async (e) => {
+        e.preventDefault();
+        const stores = Array.from(document.querySelectorAll('input[name="sel_stores"]:checked')).map(cb => cb.value);
         
-        // Exibir credenciais (aqui, o sistema precisa exibir a senha *sem hash* para o gestor anotar)
+        const data = {
+            nomeCompleto: document.getElementById('e-nome').value,
+            dataNascimento: document.getElementById('e-nasc').value,
+            cpf: document.getElementById('e-cpf').value,
+            rg: document.getElementById('e-rg').value,
+            nisPIS: document.getElementById('e-pis').value,
+            endereco: document.getElementById('e-end').value,
+            estado: document.getElementById('e-uf').value,
+            municipio: document.getElementById('e-mun').value,
+            cargo: document.getElementById('e-cargo').value,
+            jornadaHHMM: document.getElementById('e-jornada').value,
+            loginUser: genUser,
+            loginPass: genPass,
+            storeIds: stores
+        };
+
+        if(isEdit) await updateDoc(doc(db,'artifacts',appId,'public','data','employees',id), data);
+        else await addDoc(getColl('employees'), data);
+        
+        document.getElementById('modal-overlay').classList.add('hidden');
+        router('rh');
+    };
+}
+
+window.delEmp = async(id) => { if(confirm('Apagar?')) { await deleteDoc(doc(db,'artifacts',appId,'public','data','employees',id)); router('rh'); }};
+
+
+// 5. RELATÓRIOS (COM FERIADOS E OCORRÊNCIAS)
+async function renderReports(el) {
+    const snap = await getDocs(getColl('employees'));
+    employees = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    
+    el.innerHTML = `
+        <div class="no-print bg-white p-6 rounded shadow max-w-4xl mx-auto mb-8">
+            <h2 class="text-xl font-bold mb-4">Relatório de Ponto</h2>
+            <div class="flex gap-4">
+                <select id="r-emp" class="border p-2 rounded w-full"><option value="">Selecione Colaborador...</option>${employees.map(e=>`<option value="${e.id}">${e.nomeCompleto}</option>`).join('')}</select>
+                <input type="month" id="r-mes" value="${new Date().toISOString().slice(0,7)}" class="border p-2 rounded">
+                <button onclick="genReport()" class="bg-blue-600 text-white px-4 rounded font-bold">Gerar</button>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">Clique em um dia na tabela para adicionar ocorrência.</p>
+        </div>
+        <div id="report-paper" class="hidden bg-white shadow-xl mx-auto p-8 max-w-[210mm] min-h-[297mm]"></div>
+    `;
+}
+
+window.genReport = async () => {
+    const eid = document.getElementById('r-emp').value;
+    const mes = document.getElementById('r-mes').value;
+    if(!eid) return;
+
+    const emp = employees.find(e => e.id === eid);
+    const [y, m] = mes.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    
+    // Get Points
+    const q = query(getColl('registros_ponto'), where('userId','==',eid));
+    const snap = await getDocs(q);
+    const allPoints = snap.docs.map(d => ({...d.data(), d:d.data().timestamp.toDate()}));
+    
+    // Filter month
+    const monthPoints = allPoints.filter(p => p.d.getMonth() === m-1 && p.d.getFullYear() === y).sort((a,b)=>a.d-b.d);
+
+    let rows = '';
+    let totalMin = 0;
+    const targetMin = (parseInt(emp.jornadaHHMM.split(':')[0])*60) + parseInt(emp.jornadaHHMM.split(':')[1]);
+
+    for(let i=1; i<=daysInMonth; i++) {
+        const date = new Date(y, m-1, i);
+        const dayStr = date.toLocaleDateString('pt-BR'); // DD/MM/YYYY
+        const isoDate = date.toISOString().split('T')[0]; // YYYY-MM-DD
+        const wd = date.getDay();
+        const isSunday = wd === 0; // Sábado agora é dia útil
+        const dayOfWeek = date.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+
+        // Check Holiday (Local + National)
+        const holiday = struct.holidays.find(h => {
+            const hDate = h.date; // YYYY-MM-DD
+            // Lógica de feriado só funciona para o ano atual com essa implementação simplificada
+            if(hDate.slice(5) !== isoDate.slice(5)) return false; 
+            if(h.type === 'Nacional') return true;
+            if(h.type === 'Estadual' && h.scope === emp.estado) return true;
+            if(h.type === 'Municipal' && h.scope.toLowerCase() === emp.municipio.toLowerCase()) return true;
+            return false;
+        });
+
+        // Points for day
+        const dayP = monthPoints.filter(p => p.d.getDate() === i);
+        const getT = (type) => {
+            const f = dayP.find(x => x.tipo.includes(type));
+            return f ? f.d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '';
+        };
+
+        // Calc Logic (Simplified)
+        let workMin = 0;
+        if(dayP.length > 1) {
+            const start = dayP[0].d;
+            const end = dayP[dayP.length-1].d;
+            workMin = (end - start)/60000;
+            // Deduct lunch if exists
+            const lOut = dayP.find(x=>x.tipo.includes('Saída Almoço'));
+            const lIn = dayP.find(x=>x.tipo.includes('Volta Almoço'));
+            if(lOut && lIn) workMin -= (lIn.d - lOut.d)/60000;
+            workMin = Math.floor(workMin);
+        }
+        
+        if(!isSunday && !holiday) totalMin += workMin; // Considera Sábado como dia normal
+
+        // Justification (stored in local var for now, in real app needs DB)
+        const obs = holiday ? `<span class="text-red-500 font-bold">${holiday.name}</span>` : (isSunday ? 'DSR' : '');
+
+        rows += `
+            <tr onclick="addEvent('${date.toISOString()}')" class="cursor-pointer hover:bg-yellow-50 ${holiday ? 'bg-red-50' : (isSunday ? 'bg-gray-100' : '')}">
+                <td>${i}/${m} (${dayOfWeek})</td>
+                <td>${getT('Entrada')}</td>
+                <td>${getT('Saída Almoço')}</td>
+                <td>${getT('Volta Almoço')}</td>
+                <td>${getT('Saída')}</td>
+                <td>${Math.floor(workMin/60)}:${(workMin%60).toString().padStart(2,'0')}</td>
+                <td class="text-xs">${obs}</td>
+            </tr>
+        `;
+    }
+
+    const totalHours = Math.floor(totalMin/60);
+    const totalMinutes = (totalMin%60).toString().padStart(2,'0');
+
+    document.getElementById('report-paper').classList.remove('hidden');
+    document.getElementById('report-paper').innerHTML = `
+        <div class="report-header-print">
+            <div class="text-center mb-2">
+                <h1>SISTEMA DE APURAÇÃO DE PONTOS</h1>
+            </div>
+            <div class="flex justify-between items-center pb-2">
+                <div class="flex items-center gap-4">
+                    ${company.logo ? `<img src="${company.logo}" class="h-10">` : ''}
+                    <div><h1 class="text-lg font-bold uppercase">${company.nome}</h1><p class="text-xs">CNPJ: ${company.cnpj}</p></div>
+                </div>
+                <div class="text-right">
+                    <h2 class="text-md font-bold">Período: 01/${m}/${y} a ${daysInMonth}/${m}/${y}</h2>
+                </div>
+            </div>
+        </div>
+        
+        <div class="report-data-print grid grid-cols-2 gap-x-10">
+            <div><b>Nome:</b> ${emp.nomeCompleto}</div>
+            <div><b>Seg - Ter - Qua - Qui - Sex - Sáb:</b> ${emp.jornadaHHMM} - ${emp.jornadaHHMM}</div>
+            <div><b>Cargo:</b> ${emp.cargo}</div>
+            <div><b>Data de Admissão:</b> ${emp.dataAdmissao || 'N/A'}</div>
+            <div><b>Matrícula:</b> ${emp.matricula || 'N/A'}</div>
+            <div><b>PIS:</b> ${emp.nisPIS || 'N/A'}</div>
+            <div><b>CPF:</b> ${emp.cpf || 'N/A'}</div>
+        </div>
+
+        <table class="w-full text-center text-xs">
+            <thead class="bg-gray-200"><tr><th>Dia</th><th>Ent1</th><th>Sai1</th><th>Ent2</th><th>Sai2</th><th>Total</th><th>Obs/Just.</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+
+        <div class="mt-4 pt-2 text-sm">
+            <b>TOTAIS:</b> Total de Horas Trabalhadas: ${totalHours}:${totalMinutes}
+        </div>
+        
+        <div class="mt-8 pt-8 border-t text-xs text-center">
+            <p class="mb-4 text-gray-600">
+                Como funcionário, reconheço como verdadeiras as informações contidas neste relatório. <br>
+                Como empregador, reconheço como verdadeiras as informações contidas neste relatório.
+            </p>
+            <div class="flex justify-between">
+                <div class="w-1/3 border-t border-black pt-2">Assinatura Colaborador</div>
+                <div class="w-1/3 border-t border-black pt-2">Assinatura Gestor</div>
+            </div>
+        </div>
+        <button onclick="window.print()" class="no-print fixed bottom-8 right-8 bg-blue-600 text-white p-4 rounded-full shadow-xl"><i class="fa-solid fa-print"></i></button>
+    `;
+};
+
+window.addEvent = (dateIso) => {
+    const note = prompt("Adicionar observação/justificativa para este dia:");
+    if(note) alert("Observação registrada (Simulação: em produção salvaria no DB).");
+};
+
+// 6. LINKS & AUTO-CADASTRO
+function renderLinks(el) {
+    const base = window.location.href.split('?')[0];
+    el.innerHTML = `
+        <div class="bg-white p-6 rounded shadow max-w-2xl mx-auto">
+            <h2 class="text-xl font-bold mb-6">Links Públicos</h2>
+            
+            <div class="mb-6">
+                <h3 class="font-bold text-blue-600">📍 Quiosque de Ponto</h3>
+                <p class="text-sm text-gray-500 mb-2">Para tablets ou computadores compartilhados.</p>
+                <div class="flex gap-2"><input readonly value="${base}?mode=ponto" class="w-full bg-gray-100 p-2 text-sm border rounded"><button class="bg-blue-100 p-2 rounded" onclick="navigator.clipboard.writeText('${base}?mode=ponto')">Copiar</button></div>
+            </div>
+
+            <div>
+                <h3 class="font-bold text-green-600">📝 Autocadastro</h3>
+                <p class="text-sm text-gray-500 mb-2">Envie para novos candidatos preencherem os dados.</p>
+                <div class="flex gap-2"><input readonly value="${base}?mode=autocadastro" class="w-full bg-gray-100 p-2 text-sm border rounded"><button class="bg-green-100 p-2 rounded" onclick="navigator.clipboard.writeText('${base}?mode=autocadastro')">Copiar</button></div>
+            </div>
+        </div>
+    `;
+}
+
+// --- MODO PONTO (LOGIN REAL) ---
+async function renderKiosk(el) {
+    document.getElementById('main-container').className = "w-full h-full bg-slate-900 flex items-center justify-center p-4";
+    
+    // Check persistence
+    const savedAuth = JSON.parse(localStorage.getItem('ponto_auth'));
+    if(savedAuth) {
+        return renderPointClock(el, savedAuth);
+    }
+
+    el.innerHTML = `
+        <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-sm text-center">
+            ${company.logo ? `<img src="${company.logo}" class="h-16 mx-auto mb-4">` : ''}
+            <h2 class="text-2xl font-bold mb-2 text-slate-800">Ponto Eletrônico</h2>
+            <p class="text-gray-500 text-sm mb-6">Faça login para registrar</p>
+            
+            <form id="ponto-login" class="space-y-4">
+                <input id="k-user" class="w-full border p-3 rounded bg-gray-50" placeholder="Usuário">
+                <input id="k-pass" type="password" class="w-full border p-3 rounded bg-gray-50" placeholder="Senha">
+                <label class="flex items-center gap-2 text-sm text-gray-600 justify-center">
+                    <input type="checkbox" id="k-keep"> Manter conectado
+                </label>
+                <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-700 shadow-lg">ENTRAR</button>
+            </form>
+        </div>
+    `;
+
+    document.getElementById('ponto-login').onsubmit = async (e) => {
+        e.preventDefault();
+        const u = document.getElementById('k-user').value;
+        const p = document.getElementById('k-pass').value;
+        
+        const q = query(getColl('employees'), where('loginUser','==',u), where('loginPass','==',p));
+        const snap = await getDocs(q);
+        
+        if(snap.empty) return alert('Dados incorretos');
+        
+        const emp = {id:snap.docs[0].id, ...snap.docs[0].data()};
+        if(document.getElementById('k-keep').checked) {
+            localStorage.setItem('ponto_auth', JSON.stringify(emp));
+        }
+        renderPointClock(el, emp);
+    }
+}
+
+function renderPointClock(el, emp) {
+    el.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div class="bg-blue-600 p-6 text-white text-center">
+                <h2 class="text-2xl font-bold">Olá, ${emp.nomeCompleto.split(' ')[0]}</h2>
+                <p class="opacity-80 text-sm">${emp.cargo}</p>
+            </div>
+            <div class="p-8 text-center">
+                <div id="clock" class="text-5xl font-mono font-bold text-slate-700 mb-2">--:--</div>
+                <div id="date" class="text-gray-400 font-bold uppercase text-xs mb-8">--</div>
+                
+                <div id="last-reg" class="bg-gray-100 p-2 rounded text-sm mb-6">Último: <span id="last-st">...</span></div>
+
+                <button id="btn-hit" class="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-xl font-bold text-xl transition transform active:scale-95">
+                    REGISTRAR PONTO
+                </button>
+                
+                <button onclick="logoutPonto()" class="mt-6 text-gray-400 text-sm hover:text-red-500 underline">Sair / Trocar Conta</button>
+            </div>
+        </div>
+    `;
+
+    setInterval(() => {
+        const d = new Date();
+        if(document.getElementById('clock')) {
+            document.getElementById('clock').innerText = d.toLocaleTimeString('pt-BR');
+            document.getElementById('date').innerText = d.toLocaleDateString('pt-BR',{weekday:'long', day:'numeric', month:'long'});
+        }
+    }, 1000);
+
+    // Fetch last
+    (async () => {
+        const q = query(getColl('registros_ponto')); // simplified fetch
+        const snap = await getDocs(q);
+        const today = new Date().toISOString().split('T')[0];
+        const recs = snap.docs.map(d=>d.data()).filter(r => r.userId === emp.id && r.timestamp.toDate().toISOString().startsWith(today)).sort((a,b)=>a.timestamp-b.timestamp);
+        const last = recs.length ? recs[recs.length-1].tipo : 'Nenhum';
+        document.getElementById('last-st').innerText = last;
+        
+        const btn = document.getElementById('btn-hit');
+        let next = 'Entrada';
+        if(last === 'Entrada') next = 'Saída Almoço';
+        else if(last === 'Saída Almoço') next = 'Volta Almoço';
+        else if(last === 'Volta Almoço') next = 'Saída';
+        
+        btn.innerText = `REGISTRAR ${next.toUpperCase()}`;
+        btn.onclick = async () => {
+            btn.disabled = true;
+            await addDoc(getColl('registros_ponto'), { userId: emp.id, tipo: next, timestamp: serverTimestamp() });
+            alert('Registrado!');
+            renderPointClock(el, emp); // refresh
+        }
+    })();
+}
+
+window.logoutPonto = () => {
+    localStorage.removeItem('ponto_auth');
+    renderKiosk(document.getElementById('app-content'));
+}
+
+// --- MODO AUTO CADASTRO ---
+function renderAutoCadastro(el) {
+    document.getElementById('main-container').className = "w-full h-full bg-gray-100 overflow-y-auto p-4";
+    el.innerHTML = `
+        <div class="max-w-2xl mx-auto bg-white p-8 rounded shadow-xl my-10">
+            <h2 class="text-2xl font-bold mb-4 text-center">Ficha de Admissão Digital</h2>
+            <p class="text-gray-500 text-sm text-center mb-8">Preencha seus dados corretamente. Sua senha de acesso será gerada automaticamente.</p>
+            
+            <form id="form-auto" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <input id="a-nome" class="border p-2 rounded" placeholder="Nome Completo" required>
+                    <input id="a-cpf" class="border p-2 rounded" placeholder="CPF" required>
+                    <input id="a-rg" class="border p-2 rounded" placeholder="RG" required>
+                    <input id="a-nasc" type="date" class="border p-2 rounded" required>
+                    <input id="a-pis" class="border p-2 rounded" placeholder="PIS/NIS">
+                    <input id="a-end" class="border p-2 rounded md:col-span-2" placeholder="Endereço Completo">
+                    
+                    <select id="a-uf" class="border p-2 rounded" required>
+                        <option value="">Selecione seu Estado</option>
+                        ${struct.states.map(s => `<option>${s.name}</option>`).join('')}
+                    </select>
+                    <input id="a-mun" class="border p-2 rounded" placeholder="Município" required>
+                </div>
+                <button type="submit" class="w-full bg-green-600 text-white py-3 rounded font-bold hover:bg-green-700">ENVIAR CADASTRO</button>
+            </form>
+        </div>
+    `;
+
+    document.getElementById('form-auto').onsubmit = async (e) => {
+        e.preventDefault();
+        const genUser = document.getElementById('a-nome').value.split(' ')[0].toLowerCase() + Math.floor(Math.random()*100);
+        const genPass = Math.random().toString(36).slice(-6);
+        
+        const data = {
+            nomeCompleto: document.getElementById('a-nome').value,
+            cpf: document.getElementById('a-cpf').value,
+            rg: document.getElementById('a-rg').value,
+            dataNascimento: document.getElementById('a-nasc').value,
+            nisPIS: document.getElementById('a-pis').value,
+            endereco: document.getElementById('a-end').value,
+            estado: document.getElementById('a-uf').value,
+            municipio: document.getElementById('a-mun').value,
+            loginUser: genUser,
+            loginPass: genPass,
+            cargo: 'Novo (Aguardando)', // Default
+            jornadaHHMM: '08:00'
+        };
+        
+        await addDoc(getColl('employees'), data);
         el.innerHTML = `
             <div class="max-w-md mx-auto bg-white p-8 rounded shadow text-center mt-20">
                 <i class="fa-solid fa-check-circle text-5xl text-green-500 mb-4"></i>
                 <h2 class="text-2xl font-bold">Cadastro Realizado!</h2>
-                <p class="text-gray-600 mt-2">Anote as credenciais provisórias (faça a batida do ponto para forçar o colaborador a usar o login):</p>
+                <p class="text-gray-600 mt-2">Anote suas credenciais provisórias:</p>
                 <div class="bg-gray-100 p-4 rounded mt-4 font-mono text-lg border border-dashed border-gray-400">
                     <p>Usuário: <b>${genUser}</b></p>
                     <p>Senha: <b>${genPass}</b></p>
                 </div>
-                <button onclick="closeModal(); router('rh');" class="mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Ok, Entendi</button>
-            </div>`;
-    } else {
-        await updateDoc(doc(getColl('employees'), id), data);
-        closeModal();
-        router('rh');
+                <p class="text-xs text-gray-400 mt-4">Informe ao seu gestor para liberação.</p>
+            </div>
+        `;
     }
 }
 
-// RENDER REPORTS (Relatórios & Ponto)
-const renderReports = async () => {
-    // ... (HTML para a tela de relatórios, incluindo seleção de mês e ano)
-    getEl('app-content').innerHTML = `
-        <h2 class="text-3xl font-bold mb-6 text-slate-700">Relatórios & Ponto</h2>
-        <div class="bg-white shadow-lg rounded-lg p-6 mb-6">
-            <h3 class="text-xl font-semibold mb-4">Seleção de Colaboradores e Período</h3>
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <select id="report-filter-estado" class="block w-full px-3 py-2 border border-gray-300 rounded-md">
-                    <option value="">Filtrar por Estado</option>
-                </select>
-                <select id="report-filter-cargo" class="block w-full px-3 py-2 border border-gray-300 rounded-md">
-                    <option value="">Filtrar por Cargo</option>
-                </select>
-                <select id="report-month" class="block w-full px-3 py-2 border border-gray-300 rounded-md">
-                    </select>
-                <select id="report-year" class="block w-full px-3 py-2 border border-gray-300 rounded-md">
-                    </select>
-            </div>
-            
-            <button onclick="applyReportFilters()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md mb-4"><i class="fa-solid fa-filter"></i> Filtrar Colaboradores</button>
-
-            <div id="collaborator-selection" class="border p-4 rounded-md max-h-60 overflow-y-auto">
-                <div class="flex items-center mb-3">
-                    <input type="checkbox" id="select-all-employees" onclick="toggleSelectAllReports()" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
-                    <label for="select-all-employees" class="ml-2 block text-sm font-medium text-gray-700 font-bold">Selecionar Todos</label>
-                </div>
-                <div id="report-employee-list">
-                    <p>Filtre os colaboradores acima.</p>
-                </div>
-            </div>
-            
-            <button onclick="genReport(null, true)" id="btn-gen-batch" class="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-md" disabled><i class="fa-solid fa-file-export mr-2"></i> Gerar Relatórios em Lote</button>
-        </div>
-        
-        <div id="report-viewer" class="mt-6">
-            </div>
-    `;
-    // Preencher filtros e lista inicial
-    // ...
-}
-
-const applyReportFilters = async () => {
-    const estado = getEl('report-filter-estado').value;
-    const cargo = getEl('report-filter-cargo').value;
-    const listContainer = getEl('report-employee-list');
-    listContainer.innerHTML = '<p>Carregando...</p>';
-    getEl('btn-gen-batch').disabled = true;
-
-    try {
-        let q = query(getColl('employees'), orderBy('nomeCompleto', 'asc'));
-        
-        // Aplica filtros se existirem
-        let queryArgs = [];
-        if (estado) queryArgs.push(where('estado', '==', estado));
-        if (cargo) queryArgs.push(where('cargo', '==', cargo));
-        
-        q = query(getColl('employees'), ...queryArgs, orderBy('nomeCompleto', 'asc'));
-
-        const snapshot = await getDocs(q);
-        
-        listContainer.innerHTML = snapshot.docs.map(doc => {
-            const emp = doc.data();
-            return `
-                <div class="flex items-center py-1">
-                    <input type="checkbox" id="emp-check-${doc.id}" name="report-employee" value="${doc.id}" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
-                    <label for="emp-check-${doc.id}" class="ml-2 block text-sm text-gray-700">${emp.nomeCompleto} (${emp.cargo})</label>
-                </div>
-            `;
-        }).join('');
-        
-        getEl('btn-gen-batch').disabled = false;
-        
-    } catch (e) {
-        console.error("Erro ao aplicar filtro de relatórios:", e);
-        listContainer.innerHTML = `<p class="text-red-500">Erro ao carregar lista de colaboradores.</p>`;
-    }
-}
-
-const toggleSelectAllReports = () => {
-    const isChecked = getEl('select-all-employees').checked;
-    document.querySelectorAll('#report-employee-list input[type="checkbox"]').forEach(cb => {
-        cb.checked = isChecked;
-    });
-}
-
-const genReport = async (employeeId, isBatch = false) => {
-    const month = getEl('report-month').value;
-    const year = getEl('report-year').value;
-    const viewer = getEl('report-viewer');
-    
-    // Lote
-    if (isBatch) {
-        const selectedIds = Array.from(document.querySelectorAll('input[name="report-employee"]:checked')).map(cb => cb.value);
-        if (selectedIds.length === 0) {
-            alert('Selecione pelo menos um colaborador para gerar o relatório em lote.');
-            return;
-        }
-        
-        viewer.innerHTML = ''; // Limpa antes de gerar o lote
-        
-        for (const id of selectedIds) {
-            await generateSingleReport(id, month, year, viewer);
-        }
-    } else {
-        // Individual
-        viewer.innerHTML = '<div class="flex justify-center mt-20"><div class="loader"></div></div>';
-        await generateSingleReport(employeeId, month, year, viewer);
-    }
-}
-
-const generateSingleReport = async (employeeId, month, year, viewer) => {
-    // Carrega dados do colaborador e registros de ponto
-    const empDoc = await getDoc(doc(getColl('employees'), employeeId));
-    const employee = { id: empDoc.id, ...empDoc.data() };
-    
-    // Consulta os registros de ponto para o mês/ano
-    // ...
-
-    // NOVO: Cálculo dos totais
-    const jornadaMensalMin = 220 * 60; // Exemplo: 220h mensais * 60 min
-    const totalTrabalhadoMin = 180 * 60; // Exemplo: 180h trabalhadas (simulado)
-    const saldoMin = totalTrabalhadoMin - jornadaMensalMin;
-
-    const horasFaltantes = saldoMin < 0 ? formatTime(Math.abs(saldoMin)) : '00:00';
-    const horasSobrando = saldoMin > 0 ? formatTime(saldoMin) : '00:00';
-    
-    // Renderização do relatório
-    const reportHTML = `
-        <div class="report-paper bg-white p-8 mb-8 shadow-xl print-only">
-            <div class="report-data-print mt-4 border-t pt-2">
-                <h4 class="font-bold text-lg mb-2">Resumo Mensal de Horas</h4>
-                <p><strong>Horas a serem Trabalhadas (Mês):</strong> ${formatTime(jornadaMensalMin)}</p>
-                <p><strong>Horas Trabalhadas (Acumulado):</strong> ${formatTime(totalTrabalhadoMin)}</p>
-                <p class="text-red-600"><strong>Total de Horas Faltantes:</strong> ${horasFaltantes}</p>
-                <p class="text-green-600"><strong>Total de Horas Sobrando:</strong> ${horasSobrando}</p>
-            </div>
-            
-            <div class="signature-lines">
-                <div class="signature-line-box">
-                    <span>Assinatura do Colaborador</span>
-                </div>
-                <div class="signature-line-box">
-                    <span>Assinatura do Gestor / RH</span>
-                </div>
-            </div>
-        </div>
-        <div class="no-print text-center mb-4">
-            <button onclick="window.print()" class="bg-blue-600 text-white p-3 rounded-lg"><i class="fa-solid fa-print"></i> Imprimir</button>
-        </div>
-    `;
-    
-    // Adiciona ao visualizador (se for em lote, adiciona um após o outro)
-    if (viewer.innerHTML.includes('loader')) {
-        viewer.innerHTML = '';
-    }
-    viewer.insertAdjacentHTML('beforeend', reportHTML);
-}
-
-// Inicialização
-onAuthStateChanged(auth, (user) => {
-    if (user) {
-        checkAuth(); // Continua para a tela de login real
-    }
-});
-
-// NOVO: Chamada de inicialização
-checkAuth();
-
-// Expor funções globais para HTML
-window.router = router;
-window.loginUser = loginUser;
-window.toggleLoginRole = toggleLoginRole;
-window.openEmpModal = openEmpModal;
-window.saveEmployee = saveEmployee;
-window.applyRHFilters = applyRHFilters;
-window.renderDashboard = renderDashboard;
-window.renderRH = renderRH;
-window.renderReports = renderReports;
-window.applyReportFilters = applyReportFilters;
-window.toggleSelectAllReports = toggleSelectAllReports;
-window.genReport = genReport;
-window.generateSingleReport = generateSingleReport; // Expõe para ser chamada em lote (genReport)
-window.closeModal = () => getEl('modal-overlay').classList.add('hidden');
+init();
