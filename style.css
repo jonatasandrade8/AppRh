@@ -1,12 +1,57 @@
+/* Base Styles */
+body {
+    margin: 0;
+    padding: 0;
+}
+
+/* Loader Styles */
+.loader { 
+    border: 4px solid #f3f3f3; 
+    border-top: 4px solid #3b82f6; 
+    border-radius: 50%; 
+    width: 30px; 
+    height: 30px; 
+    animation: spin 1s linear infinite; 
+}
+.loader-small {
+    border: 3px solid #f3f3f3; 
+    border-top: 3px solid #3b82f6; 
+    border-radius: 50%; 
+    width: 20px; 
+    height: 20px; 
+    animation: spin 1s linear infinite; 
+    display: inline-block;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Print Styles for Relatório (Folha de Ponto) */
 @media print {
+    /* Define tamanho A4 e margem reduzida para maximizar área de conteúdo */
     @page { size: A4; margin: 10mm; }
-    body { background: white; -webkit-print-color-adjust: exact; }
-    #sidebar, #mobile-header, .no-print, #login-screen { display: none !important; }
-    #main-container { margin: 0 !important; width: 100% !important; padding: 0 !important; }
-    .print-only { display: block !important; }
-    table { width: 100%; border-collapse: collapse; font-size: 10px; }
-    th, td { border: 1px solid #000; padding: 3px; }
     
+    /* Esconde elementos de interface */
+    body { background: white; -webkit-print-color-adjust: exact; }
+    #sidebar, #mobile-header, .no-print, #login-screen, #modal-overlay { display: none !important; }
+    
+    /* Configura o container principal para a impressão */
+    #main-container { margin: 0 !important; width: 100% !important; padding: 0 !important; }
+    #app-content { padding: 0 !important; }
+    
+    /* Exibe o conteúdo de impressão */
+    .print-only { 
+        display: block !important; 
+        padding: 10mm; /* Adiciona padding para simular margem interna do report-container */
+    }
+
+    /* Estilo de Tabela */
+    table { width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: 20px; }
+    th, td { border: 1px solid #000; padding: 4px 6px; }
+    th { background-color: #f0f0f0; }
+
     /* Estilos do cabeçalho customizado para impressão */
     .report-header-print {
         border-bottom: 2px solid #000;
@@ -14,7 +59,7 @@
         margin-bottom: 10px;
     }
     .report-header-print h1 {
-        font-size: 18px;
+        font-size: 16px;
         font-weight: bold;
     }
     .report-data-print {
@@ -24,11 +69,29 @@
     .report-data-print div {
         line-height: 1.4;
     }
+
+    /* Ajuste de Linhas de Assinatura - PRÓXIMO À MARGEM DA FOLHA */
+    .signatures-container-print {
+        position: fixed; /* Fixa a posição na página */
+        bottom: 15mm;   /* 15mm acima da margem inferior (10mm + 5mm) */
+        left: 10mm;     /* Margem esquerda */
+        right: 10mm;    /* Margem direita */
+        width: auto;
+        padding: 0;
+        margin: 0;
+    }
+    .signatures-print {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        text-align: center;
+        font-size: 10px;
+    }
+    .signatures-print > div {
+        width: 45%; /* Ajuste para ter um pequeno espaço no centro */
+        border-top: 1px solid #000;
+        padding-top: 3px;
+    }
 }
+
 .print-only { display: none; }
-.loader { border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-/* Custom Scroll */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #f1f1f1; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
