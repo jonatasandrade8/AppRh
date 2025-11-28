@@ -1,7 +1,7 @@
 // js/renders/renderAdmin.js
 
-import * as fb from '../firebase.js';
-import * as main from '../main.js';
+import * as fb from './firebase.js';
+import * as main from './main.js';
 
 // --- GESTOR AUTH ---
 document.getElementById('form-login').onsubmit = async (e) => {
