@@ -21,6 +21,7 @@ const getColl = (c) => collection(db, 'artifacts', appId, 'public', 'data', c);
 // STATE
 let company = {}, struct = { roles:[], holidays:[], networks:[], stores:[], states:[] };
 let employees = [], isKiosk = false, isAuto = false;
+let currentKioskEmployee = null; // NEW: Store employee data for Kiosk flow
 
 // INIT
 async function init() {
@@ -84,6 +85,11 @@ window.router = async (view) => {
     el.innerHTML = '<div class="flex justify-center mt-20"><div class="loader"></div></div>';
     if(window.innerWidth < 768) document.getElementById('sidebar').classList.add('hidden');
     
+    // Mobile First: Ensure tables/wide content scroll horizontally
+    if(view === 'rh' || view === 'relatorios') {
+        el.className = 'flex-1 overflow-y-auto p-4 md:p-8 relative'; // Base class
+    }
+
     switch(view) {
         case 'dashboard': renderDashboard(el); break;
         case 'rh': await renderRH(el); break;
@@ -179,7 +185,7 @@ function renderConfigStruct(el) {
     el.innerHTML = `
         <div class="bg-white p-6 rounded shadow h-full flex flex-col">
             <h2 class="text-xl font-bold mb-6">Estrutura Operacional</h2>
-            <div class="flex border-b mb-4 text-sm">
+            <div class="flex border-b mb-4 text-sm overflow-x-auto whitespace-nowrap">
                 <button onclick="openTab('tab-est')" class="px-4 py-2 border-b-2 border-blue-500 font-bold tab-btn">Estados</button>
                 <button onclick="openTab('tab-carg')" class="px-4 py-2 border-b-2 border-transparent hover:border-gray-300 tab-btn">Cargos</button>
                 <button onclick="openTab('tab-rede')" class="px-4 py-2 border-b-2 border-transparent hover:border-gray-300 tab-btn">Redes & Lojas</button>
@@ -281,8 +287,7 @@ window.addHoliday = async () => {
     const t = document.getElementById('hol-type').value;
     const s = document.getElementById('hol-scope').value;
     if(!d || !n) return;
-    // Store date as MD (MM-DD) for recurrence or YYYY-MM-DD for specific? 
-    // Simplified: Store YYYY-MM-DD for now.
+    // Store date as YYYY-MM-DD for now.
     await addDoc(getColl('holidays'), {date:d, name:n, type:t, scope:s});
     await loadStruct(); router('config-struct');
 };
@@ -300,7 +305,7 @@ async function renderRH(el) {
                 <button onclick="openEmpModal()" class="bg-green-600 text-white px-4 py-2 rounded flex gap-2 items-center"><i class="fa-solid fa-plus"></i> Novo Cadastro</button>
             </div>
             <div class="overflow-x-auto">
-                <table class="w-full text-sm text-left">
+                <table class="w-full text-sm text-left whitespace-nowrap">
                     <thead class="bg-gray-100 uppercase">
                         <tr><th class="p-3">Nome/CPF</th><th class="p-3">Cargo</th><th class="p-3">Local</th><th class="p-3">Acesso</th><th class="p-3">Ação</th></tr>
                     </thead>
@@ -446,14 +451,14 @@ async function renderReports(el) {
     el.innerHTML = `
         <div class="no-print bg-white p-6 rounded shadow max-w-4xl mx-auto mb-8">
             <h2 class="text-xl font-bold mb-4">Relatório de Ponto</h2>
-            <div class="flex gap-4">
-                <select id="r-emp" class="border p-2 rounded w-full"><option value="">Selecione Colaborador...</option>${employees.map(e=>`<option value="${e.id}">${e.nomeCompleto}</option>`).join('')}</select>
+            <div class="flex gap-4 flex-wrap">
+                <select id="r-emp" class="border p-2 rounded flex-1 min-w-[200px]"><option value="">Selecione Colaborador...</option>${employees.map(e=>`<option value="${e.id}">${e.nomeCompleto}</option>`).join('')}</select>
                 <input type="month" id="r-mes" value="${new Date().toISOString().slice(0,7)}" class="border p-2 rounded">
                 <button onclick="genReport()" class="bg-blue-600 text-white px-4 rounded font-bold">Gerar</button>
             </div>
             <p class="text-xs text-gray-500 mt-2">Clique em um dia na tabela para adicionar ocorrência.</p>
         </div>
-        <div id="report-paper" class="hidden bg-white shadow-xl mx-auto p-8 max-w-[210mm] min-h-[297mm]"></div>
+        <div id="report-paper" class="hidden bg-white shadow-xl mx-auto p-4 md:p-8 max-w-[210mm] min-h-[297mm]"></div>
     `;
 }
 
@@ -544,8 +549,8 @@ window.genReport = async () => {
             <div class="text-center mb-2">
                 <h1>SISTEMA DE APURAÇÃO DE PONTOS</h1>
             </div>
-            <div class="flex justify-between items-center pb-2">
-                <div class="flex items-center gap-4">
+            <div class="flex flex-col md:flex-row justify-between items-center pb-2">
+                <div class="flex items-center gap-4 mb-2 md:mb-0">
                     ${company.logo ? `<img src="${company.logo}" class="h-10">` : ''}
                     <div><h1 class="text-lg font-bold uppercase">${company.nome}</h1><p class="text-xs">CNPJ: ${company.cnpj}</p></div>
                 </div>
@@ -555,7 +560,7 @@ window.genReport = async () => {
             </div>
         </div>
         
-        <div class="report-data-print grid grid-cols-2 gap-x-10">
+        <div class="report-data-print grid grid-cols-1 md:grid-cols-2 gap-x-10">
             <div><b>Nome:</b> ${emp.nomeCompleto}</div>
             <div><b>Seg - Ter - Qua - Qui - Sex - Sáb:</b> ${emp.jornadaHHMM} - ${emp.jornadaHHMM}</div>
             <div><b>Cargo:</b> ${emp.cargo}</div>
@@ -565,10 +570,12 @@ window.genReport = async () => {
             <div><b>CPF:</b> ${emp.cpf || 'N/A'}</div>
         </div>
 
-        <table class="w-full text-center text-xs">
-            <thead class="bg-gray-200"><tr><th>Dia</th><th>Ent1</th><th>Sai1</th><th>Ent2</th><th>Sai2</th><th>Total</th><th>Obs/Just.</th></tr></thead>
-            <tbody>${rows}</tbody>
-        </table>
+        <div class="overflow-x-auto">
+            <table class="w-full text-center text-xs whitespace-nowrap">
+                <thead class="bg-gray-200"><tr><th>Dia</th><th>Ent1</th><th>Sai1</th><th>Ent2</th><th>Sai2</th><th>Total</th><th>Obs/Just.</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
 
         <div class="mt-4 pt-2 text-sm">
             <b>TOTAIS:</b> Total de Horas Trabalhadas: ${totalHours}:${totalMinutes}
@@ -603,13 +610,13 @@ function renderLinks(el) {
             <div class="mb-6">
                 <h3 class="font-bold text-blue-600">📍 Quiosque de Ponto</h3>
                 <p class="text-sm text-gray-500 mb-2">Para tablets ou computadores compartilhados.</p>
-                <div class="flex gap-2"><input readonly value="${base}?mode=ponto" class="w-full bg-gray-100 p-2 text-sm border rounded"><button class="bg-blue-100 p-2 rounded" onclick="navigator.clipboard.writeText('${base}?mode=ponto')">Copiar</button></div>
+                <div class="flex flex-col sm:flex-row gap-2"><input readonly value="${base}?mode=ponto" class="w-full bg-gray-100 p-2 text-sm border rounded"><button class="bg-blue-100 p-2 rounded" onclick="navigator.clipboard.writeText('${base}?mode=ponto')">Copiar</button></div>
             </div>
 
             <div>
                 <h3 class="font-bold text-green-600">📝 Autocadastro</h3>
                 <p class="text-sm text-gray-500 mb-2">Envie para novos candidatos preencherem os dados.</p>
-                <div class="flex gap-2"><input readonly value="${base}?mode=autocadastro" class="w-full bg-gray-100 p-2 text-sm border rounded"><button class="bg-green-100 p-2 rounded" onclick="navigator.clipboard.writeText('${base}?mode=autocadastro')">Copiar</button></div>
+                <div class="flex flex-col sm:flex-row gap-2"><input readonly value="${base}?mode=autocadastro" class="w-full bg-gray-100 p-2 text-sm border rounded"><button class="bg-green-100 p-2 rounded" onclick="navigator.clipboard.writeText('${base}?mode=autocadastro')">Copiar</button></div>
             </div>
         </div>
     `;
@@ -619,10 +626,9 @@ function renderLinks(el) {
 async function renderKiosk(el) {
     document.getElementById('main-container').className = "w-full h-full bg-slate-900 flex items-center justify-center p-4";
     
-    // Check persistence
-    const savedAuth = JSON.parse(localStorage.getItem('ponto_auth'));
-    if(savedAuth) {
-        return renderPointClock(el, savedAuth);
+    // REMOVED: Check persistence (Mandatory daily login)
+    if(currentKioskEmployee) {
+        return renderPointClock(el, currentKioskEmployee);
     }
 
     el.innerHTML = `
@@ -634,9 +640,7 @@ async function renderKiosk(el) {
             <form id="ponto-login" class="space-y-4">
                 <input id="k-user" class="w-full border p-3 rounded bg-gray-50" placeholder="Usuário">
                 <input id="k-pass" type="password" class="w-full border p-3 rounded bg-gray-50" placeholder="Senha">
-                <label class="flex items-center gap-2 text-sm text-gray-600 justify-center">
-                    <input type="checkbox" id="k-keep"> Manter conectado
-                </label>
+                
                 <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-700 shadow-lg">ENTRAR</button>
             </form>
         </div>
@@ -653,10 +657,94 @@ async function renderKiosk(el) {
         if(snap.empty) return alert('Dados incorretos');
         
         const emp = {id:snap.docs[0].id, ...snap.docs[0].data()};
-        if(document.getElementById('k-keep').checked) {
-            localStorage.setItem('ponto_auth', JSON.stringify(emp));
-        }
+        
+        // NEW: Store employee data in global variable
+        currentKioskEmployee = emp;
+        
+        // REMOVED: localStorage.setItem
+        
         renderPointClock(el, emp);
+    }
+}
+
+// NEW: Function to switch tabs
+window.switchTab = (tabId, emp) => {
+    document.getElementById('ponto-tab').classList.add('hidden');
+    document.getElementById('historico-tab').classList.add('hidden');
+    
+    document.getElementById('tab-ponto-btn').classList.remove('border-blue-600', 'font-bold');
+    document.getElementById('tab-historico-btn').classList.remove('border-blue-600', 'font-bold');
+    
+    document.getElementById(tabId).classList.remove('hidden');
+    document.getElementById(`tab-${tabId}-btn`).classList.add('border-blue-600', 'font-bold');
+
+    if(tabId === 'historico-tab') renderHistoricoPonto(emp);
+}
+
+// NEW: Function to render employee's point history
+async function renderHistoricoPonto(emp) {
+    const el = document.getElementById('historico-content');
+    el.innerHTML = '<div class="flex justify-center mt-4"><div class="loader"></div></div>';
+
+    try {
+        const q = query(getColl('registros_ponto'), where('userId','==',emp.id));
+        const snap = await getDocs(q);
+        // Sort by date DESC, map Date objects
+        const allPoints = snap.docs.map(d => ({...d.data(), d:d.data().timestamp.toDate()})).sort((a,b)=>b.d-a.d);
+
+        // 1. Batidas do Dia
+        const today = new Date().toLocaleDateString('pt-BR');
+        const todayPoints = allPoints.filter(p => p.d.toLocaleDateString('pt-BR') === today).sort((a,b)=>a.d-b.d); // Sort ASC for daily list
+        const dailyHtml = `
+            <h3 class="font-bold text-lg mb-3">Batidas de Hoje</h3>
+            <ul class="space-y-2 text-sm max-h-[30vh] overflow-y-auto">${todayPoints.map(p => 
+                `<li class="bg-gray-100 p-3 rounded flex justify-between items-center shadow-sm">
+                    <span class="font-semibold text-slate-700">${p.tipo}</span>
+                    <span class="font-mono text-xs text-gray-500">${p.d.toLocaleTimeString('pt-BR')}</span>
+                </li>`).join('') || '<li class="text-gray-500 p-3 bg-gray-50 rounded">Nenhuma batida registrada hoje.</li>'}
+            </ul>
+        `;
+        
+        // 2. Histórico Mensal (Tabela - last 30 unique days)
+        const uniqueDays = [...new Set(allPoints.map(p => p.d.toLocaleDateString('pt-BR')))].slice(0, 30);
+        
+        const rows = uniqueDays.map(dayStr => {
+            const dayPoints = allPoints.filter(p => p.d.toLocaleDateString('pt-BR') === dayStr).sort((a,b)=>a.d-b.d);
+            const dayOfWeek = dayPoints[0].d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+            
+            const getT = (type) => {
+                const f = dayPoints.find(x => x.tipo.includes(type));
+                return f ? f.d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '--:--';
+            };
+            return `
+                <tr class="border-b hover:bg-gray-50">
+                    <td class="p-2 font-bold">${dayStr.slice(0,5)} (${dayOfWeek})</td>
+                    <td class="p-2">${getT('Entrada')}</td>
+                    <td class="p-2">${getT('Saída Almoço')}</td>
+                    <td class="p-2">${getT('Volta Almoço')}</td>
+                    <td class="p-2">${getT('Saída')}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const monthlyHtml = `
+            <h3 class="font-bold text-lg mt-6 mb-3">Histórico Mensal (Últimos 30 Dias)</h3>
+            <div class="overflow-x-auto border rounded">
+                <table class="w-full text-sm text-left whitespace-nowrap">
+                    <thead class="bg-gray-100 uppercase text-xs">
+                        <tr><th class="p-2">Data</th><th class="p-2">Ent.1</th><th class="p-2">Sai.1</th><th class="p-2">Ent.2</th><th class="p-2">Sai.2</th></tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+            ${uniqueDays.length === 0 ? '<p class="text-gray-500 mt-2">Nenhum registro encontrado no último mês.</p>' : ''}
+        `;
+
+        el.innerHTML = dailyHtml + monthlyHtml;
+
+    } catch(error) {
+        console.error("Error loading historical points:", error);
+        el.innerHTML = `<p class="text-red-500">Erro ao carregar o histórico: ${error.message}</p>`;
     }
 }
 
@@ -667,7 +755,13 @@ function renderPointClock(el, emp) {
                 <h2 class="text-2xl font-bold">Olá, ${emp.nomeCompleto.split(' ')[0]}</h2>
                 <p class="opacity-80 text-sm">${emp.cargo}</p>
             </div>
-            <div class="p-8 text-center">
+            
+            <div class="flex justify-around border-b text-sm font-semibold text-gray-600">
+                <button onclick="switchTab('ponto-tab', currentKioskEmployee)" id="tab-ponto-btn" class="p-3 border-b-2 border-blue-600 font-bold">Bater Ponto</button>
+                <button onclick="switchTab('historico-tab', currentKioskEmployee)" id="tab-historico-btn" class="p-3 border-b-2 border-transparent">Meu Histórico</button>
+            </div>
+
+            <div id="ponto-tab" class="p-8 text-center">
                 <div id="clock" class="text-5xl font-mono font-bold text-slate-700 mb-2">--:--</div>
                 <div id="date" class="text-gray-400 font-bold uppercase text-xs mb-8">--</div>
                 
@@ -679,7 +773,11 @@ function renderPointClock(el, emp) {
                 
                 <button onclick="logoutPonto()" class="mt-6 text-gray-400 text-sm hover:text-red-500 underline">Sair / Trocar Conta</button>
             </div>
-        </div>
+            
+            <div id="historico-tab" class="hidden p-4 md:p-6 overflow-y-auto max-h-[70vh]">
+                <div id="historico-content">Carregando histórico...</div>
+            </div>
+            </div>
     `;
 
     setInterval(() => {
@@ -710,13 +808,15 @@ function renderPointClock(el, emp) {
             btn.disabled = true;
             await addDoc(getColl('registros_ponto'), { userId: emp.id, tipo: next, timestamp: serverTimestamp() });
             alert('Registrado!');
-            renderPointClock(el, emp); // refresh
+            // Re-render only the point clock content for performance, staying on the point tab
+            renderPointClock(el, emp); 
         }
     })();
 }
 
 window.logoutPonto = () => {
-    localStorage.removeItem('ponto_auth');
+    // REMOVED: localStorage.removeItem('ponto_auth')
+    currentKioskEmployee = null; // Clear state
     renderKiosk(document.getElementById('app-content'));
 }
 
