@@ -667,8 +667,8 @@ async function renderKiosk(el) {
     }
 }
 
-// NEW: Function to switch tabs
-window.switchTab = (tabId, emp) => {
+// FIXED: Function to switch tabs - Removed 'emp' argument from call
+window.switchTab = (tabId) => {
     document.getElementById('ponto-tab').classList.add('hidden');
     document.getElementById('historico-tab').classList.add('hidden');
     
@@ -678,7 +678,8 @@ window.switchTab = (tabId, emp) => {
     document.getElementById(tabId).classList.remove('hidden');
     document.getElementById(`tab-${tabId}-btn`).classList.add('border-blue-600', 'font-bold');
 
-    if(tabId === 'historico-tab') renderHistoricoPonto(emp);
+    // FIXED: Now relies on the global currentKioskEmployee
+    if(tabId === 'historico-tab') renderHistoricoPonto(currentKioskEmployee);
 }
 
 // NEW: Function to render employee's point history
@@ -757,8 +758,8 @@ function renderPointClock(el, emp) {
             </div>
             
             <div class="flex justify-around border-b text-sm font-semibold text-gray-600">
-                <button onclick="switchTab('ponto-tab', currentKioskEmployee)" id="tab-ponto-btn" class="p-3 border-b-2 border-blue-600 font-bold">Bater Ponto</button>
-                <button onclick="switchTab('historico-tab', currentKioskEmployee)" id="tab-historico-btn" class="p-3 border-b-2 border-transparent">Meu Histórico</button>
+                <button onclick="switchTab('ponto-tab')" id="tab-ponto-btn" class="p-3 border-b-2 border-blue-600 font-bold">Bater Ponto</button>
+                <button onclick="switchTab('historico-tab')" id="tab-historico-btn" class="p-3 border-b-2 border-transparent">Meu Histórico</button>
             </div>
 
             <div id="ponto-tab" class="p-8 text-center">
