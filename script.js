@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // CONFIG
 const firebaseConfig = {
@@ -379,7 +379,7 @@ window.openEmpModal = (id) => {
 
                 <div class="md:col-span-3 bg-gray-50 p-4 rounded border">
                     <label class="font-bold text-sm block mb-2">Vínculo de Lojas/Redes</label>
-                    <div id="store-selector" class="max-h-40 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <div id="store-selector" class="max-h-40 overflow-y-auto grid grid-cols-1 md:col-span-2 gap-2 text-sm">
                         <p class="text-gray-500 italic">Selecione um cargo primeiro.</p>
                     </div>
                 </div>
@@ -688,8 +688,15 @@ async function renderHistoricoPonto(emp) {
     el.innerHTML = '<div class="flex justify-center mt-4"><div class="loader"></div></div>';
 
     try {
-        const q = query(getColl('registros_ponto'), where('userId','==',emp.id));
+        // FIX: Adicionando orderBy('timestamp', 'desc') para estabilizar a consulta ao Firebase,
+        // que estava travando o carregamento do histórico.
+        const q = query(
+            getColl('registros_ponto'), 
+            where('userId','==',emp.id),
+            orderBy('timestamp', 'desc') // Adicionado para estabilizar a query
+        );
         const snap = await getDocs(q);
+        
         // Sort by date DESC, map Date objects
         const allPoints = snap.docs.map(d => ({...d.data(), d:d.data().timestamp.toDate()})).sort((a,b)=>b.d-a.d);
 

@@ -1,5 +1,6 @@
 @media print {
     @page { size: A4; margin: 10mm; }
+    /* LINHA CORRIGIDA: Contém apenas a propriedade prefixada suportada */
     body { background: white; -webkit-print-color-adjust: exact; }
     #sidebar, #mobile-header, .no-print, #login-screen { display: none !important; }
     #main-container { margin: 0 !important; width: 100% !important; padding: 0 !important; }
