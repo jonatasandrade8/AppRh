@@ -6,12 +6,13 @@ import { getStorage, ref, uploadString, getDownloadURL } from "https://www.gstat
 // --- CONFIGURAÇÃO FIREBASE (Obrigatório usar as globais se existirem) ---
 // Configuração padrão de fallback, será substituída pelas variáveis globais em tempo de execução no Canvas
 const fallbackConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_AUTH_DOMAIN",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_STORAGE_BUCKET",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+     apiKey: "AIzaSyBLxhi9yn506R-kjlOoMz7R_i7C7c5iRjs",
+  authDomain: "apprh-db10f.firebaseapp.com",
+  projectId: "apprh-db10f",
+  storageBucket: "apprh-db10f.firebasestorage.app",
+  messagingSenderId: "1086403355974",
+  appId: "1:1086403355974:web:9b31c7cc2f5d4411a27147",
+  measurementId: "G-2L7PFCGDRM"
 };
 const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : JSON.stringify(fallbackConfig));
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'rh-enterprise-v4-mobile';
