@@ -1,6 +1,6 @@
 // js/renders/renderKiosk.js
 
-import * as fb from '../firebase.js';
+import * as fb from '../api.js';
 import * as main from '../main.js';
 
 let clockInterval; // Para controlar o relógio
@@ -13,7 +13,7 @@ export function renderKioskLogin(el) {
     if (main.currentKioskEmployee) {
         return renderPointClock(el, main.currentKioskEmployee);
     }
-    
+
     // Renderiza a tela de login
     el.innerHTML = `
         <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-sm text-center">
@@ -33,16 +33,16 @@ export function renderKioskLogin(el) {
         e.preventDefault();
         const u = document.getElementById('k-user').value;
         const p = document.getElementById('k-pass').value;
-        
-        const q = fb.query(fb.getColl('employees'), fb.where('loginUser','==',u), fb.where('loginPass','==',p));
+
+        const q = fb.query(fb.getColl('employees'), fb.where('loginUser', '==', u), fb.where('loginPass', '==', p));
         const snap = await fb.getDocs(q);
-        
-        if(snap.empty) return alert('Dados incorretos');
-        
-        const emp = {id:snap.docs[0].id, ...snap.docs[0].data()};
-        
+
+        if (snap.empty) return alert('Dados incorretos');
+
+        const emp = { id: snap.docs[0].id, ...snap.docs[0].data() };
+
         main.currentKioskEmployee = emp; // Define estado global
-        
+
         renderPointClock(el, emp);
     }
 }
@@ -87,8 +87,8 @@ function renderPointClock(el, emp) {
         const d = new Date();
         const clockEl = document.getElementById('clock');
         const dateEl = document.getElementById('date');
-        if(clockEl) clockEl.innerText = d.toLocaleTimeString('pt-BR');
-        if(dateEl) dateEl.innerText = d.toLocaleDateString('pt-BR',{weekday:'long', day:'numeric', month:'long'});
+        if (clockEl) clockEl.innerText = d.toLocaleTimeString('pt-BR');
+        if (dateEl) dateEl.innerText = d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
     }, 1000);
 
     updatePointButton(emp);
@@ -99,30 +99,61 @@ async function updatePointButton(emp) {
     const q = fb.query(fb.getColl('registros_ponto'));
     const snap = await fb.getDocs(q);
     const today = new Date().toISOString().split('T')[0];
-    const recs = snap.docs.map(d=>d.data()).filter(r => r.userId === emp.id && r.timestamp.toDate().toISOString().startsWith(today)).sort((a,b)=>a.timestamp-b.timestamp);
-    const last = recs.length ? recs[recs.length-1].tipo : 'Nenhum';
-    
+    const recs = snap.docs.map(d => d.data()).filter(r => r.userId === emp.id && r.timestamp.toDate().toISOString().startsWith(today)).sort((a, b) => a.timestamp - b.timestamp);
+    const last = recs.length ? recs[recs.length - 1].tipo : 'Nenhum';
+
     const lastEl = document.getElementById('last-st');
     if (lastEl) lastEl.innerText = last;
-    
+
     const btn = document.getElementById('btn-hit');
     if (!btn) return;
 
     let next = 'Entrada';
-    if(last === 'Entrada') next = 'Saída Almoço';
-    else if(last === 'Saída Almoço') next = 'Volta Almoço';
-    else if(last === 'Volta Almoço') next = 'Saída';
-    if(last === 'Saída') next = 'Entrada (Aguardando Novo Dia)'; 
-    
+    if (last === 'Entrada') next = 'Saída Almoço';
+    else if (last === 'Saída Almoço') next = 'Volta Almoço';
+    else if (last === 'Volta Almoço') next = 'Saída';
+    if (last === 'Saída') next = 'Entrada (Aguardando Novo Dia)';
+
     btn.innerText = `REGISTRAR ${next.toUpperCase()}`;
     btn.disabled = (last === 'Saída');
 
     btn.onclick = async () => {
-        if (next.includes('Aguardando')) return; 
+        if (next.includes('Aguardando')) return;
         btn.disabled = true;
-        await fb.addDoc(fb.getColl('registros_ponto'), { userId: emp.id, tipo: next, timestamp: fb.serverTimestamp() });
+        btn.innerText = "OBTENDO LOCALIZAÇÃO...";
+
+        let locationData = { error: "Not supported/denied" };
+
+        try {
+            if (navigator.geolocation) {
+                locationData = await new Promise((resolve) => {
+                    navigator.geolocation.getCurrentPosition(
+                        (pos) => resolve({
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude,
+                            acc: pos.coords.accuracy
+                        }),
+                        (err) => resolve({ error: err.message }),
+                        { timeout: 10000, enableHighAccuracy: true }
+                    );
+                });
+            }
+        } catch (e) {
+            console.error(e);
+        }
+
+        btn.innerText = "ENVIANDO...";
+
+        await fb.addDoc(fb.getColl('registros_ponto'), {
+            userId: emp.id,
+            tipo: next,
+            timestamp: fb.serverTimestamp(),
+            location: locationData,
+            device: navigator.userAgent
+        });
+
         alert(`Ponto de ${next} registrado!`);
-        renderPointClock(document.getElementById('app-content'), emp); 
+        renderPointClock(document.getElementById('app-content'), emp);
     }
 }
 
@@ -132,14 +163,14 @@ async function updatePointButton(emp) {
 window.switchTabKiosk = (tabId) => {
     document.getElementById('ponto-tab').classList.add('hidden');
     document.getElementById('historico-tab').classList.add('hidden');
-    
+
     document.getElementById('tab-ponto-btn').classList.remove('border-blue-600', 'font-bold');
     document.getElementById('tab-historico-btn').classList.remove('border-blue-600', 'font-bold');
-    
+
     document.getElementById(tabId).classList.remove('hidden');
     document.getElementById(`tab-${tabId}-btn`).classList.add('border-blue-600', 'font-bold');
 
-    if(tabId === 'historico-tab') renderHistoricoPonto(main.currentKioskEmployee);
+    if (tabId === 'historico-tab') renderHistoricoPonto(main.currentKioskEmployee);
 }
 
 // Função de renderização do Histórico (com correção de query)
@@ -149,41 +180,41 @@ window.renderHistoricoPonto = async (emp) => {
 
     try {
         const q = fb.query(
-            fb.getColl('registros_ponto'), 
-            fb.where('userId','==',emp.id),
-            fb.orderBy('timestamp', 'desc') 
+            fb.getColl('registros_ponto'),
+            fb.where('userId', '==', emp.id),
+            fb.orderBy('timestamp', 'desc')
         );
         const snap = await fb.getDocs(q);
-        
-        const allPoints = snap.docs.map(d => ({...d.data(), d:d.data().timestamp.toDate()})).sort((a,b)=>b.d-a.d);
+
+        const allPoints = snap.docs.map(d => ({ ...d.data(), d: d.data().timestamp.toDate() })).sort((a, b) => b.d - a.d);
 
         // 1. Batidas do Dia
         const today = new Date().toLocaleDateString('pt-BR');
-        const todayPoints = allPoints.filter(p => p.d.toLocaleDateString('pt-BR') === today).sort((a,b)=>a.d-b.d); 
+        const todayPoints = allPoints.filter(p => p.d.toLocaleDateString('pt-BR') === today).sort((a, b) => a.d - b.d);
         const dailyHtml = `
             <h3 class="font-bold text-lg mb-3">Batidas de Hoje</h3>
-            <ul class="space-y-2 text-sm max-h-[30vh] overflow-y-auto">${todayPoints.map(p => 
-                `<li class="bg-gray-100 p-3 rounded flex justify-between items-center shadow-sm">
+            <ul class="space-y-2 text-sm max-h-[30vh] overflow-y-auto">${todayPoints.map(p =>
+            `<li class="bg-gray-100 p-3 rounded flex justify-between items-center shadow-sm">
                     <span class="font-semibold text-slate-700">${p.tipo}</span>
                     <span class="font-mono text-xs text-gray-500">${p.d.toLocaleTimeString('pt-BR')}</span>
                 </li>`).join('') || '<li class="text-gray-500 p-3 bg-gray-50 rounded">Nenhuma batida registrada hoje.</li>'}
             </ul>
         `;
-        
+
         // 2. Histórico Mensal
         const uniqueDays = [...new Set(allPoints.map(p => p.d.toLocaleDateString('pt-BR')))].slice(0, 30);
-        
+
         const rows = uniqueDays.map(dayStr => {
-            const dayPoints = allPoints.filter(p => p.d.toLocaleDateString('pt-BR') === dayStr).sort((a,b)=>a.d-b.d);
+            const dayPoints = allPoints.filter(p => p.d.toLocaleDateString('pt-BR') === dayStr).sort((a, b) => a.d - b.d);
             const dayOfWeek = dayPoints[0].d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
-            
+
             const getT = (type) => {
                 const f = dayPoints.find(x => x.tipo.includes(type));
-                return f ? f.d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '--:--';
+                return f ? f.d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
             };
             return `
                 <tr class="border-b hover:bg-gray-50">
-                    <td class="p-2 font-bold">${dayStr.slice(0,5)} (${dayOfWeek})</td>
+                    <td class="p-2 font-bold">${dayStr.slice(0, 5)} (${dayOfWeek})</td>
                     <td class="p-2">${getT('Entrada')}</td>
                     <td class="p-2">${getT('Saída Almoço')}</td>
                     <td class="p-2">${getT('Volta Almoço')}</td>
@@ -206,7 +237,7 @@ window.renderHistoricoPonto = async (emp) => {
         `;
 
         el.innerHTML = dailyHtml + monthlyHtml;
-    } catch(error) {
+    } catch (error) {
         console.error("Error loading historical points:", error);
         el.innerHTML = `<p class="text-red-500">Erro ao carregar o histórico: ${error.message}</p>`;
     }
@@ -215,6 +246,6 @@ window.renderHistoricoPonto = async (emp) => {
 // Função de Logout do Quiosque
 window.logoutPontoKiosk = () => {
     if (clockInterval) clearInterval(clockInterval);
-    main.currentKioskEmployee = null; 
+    main.currentKioskEmployee = null;
     renderKioskLogin(document.getElementById('app-content'));
 }

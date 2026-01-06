@@ -1,6 +1,6 @@
 // js/renders/renderAutoCadastro.js
 
-import * as fb from '../firebase.js';
+import * as fb from '../api.js';
 import * as main from '../main.js';
 
 export function renderAutoCadastro(el) {
@@ -31,9 +31,9 @@ export function renderAutoCadastro(el) {
 
     document.getElementById('form-auto').onsubmit = async (e) => {
         e.preventDefault();
-        const genUser = document.getElementById('a-nome').value.split(' ')[0].toLowerCase() + Math.floor(Math.random()*100);
+        const genUser = document.getElementById('a-nome').value.split(' ')[0].toLowerCase() + Math.floor(Math.random() * 100);
         const genPass = Math.random().toString(36).slice(-6);
-        
+
         const data = {
             nomeCompleto: document.getElementById('a-nome').value,
             cpf: document.getElementById('a-cpf').value,
@@ -45,10 +45,10 @@ export function renderAutoCadastro(el) {
             municipio: document.getElementById('a-mun').value,
             loginUser: genUser,
             loginPass: genPass,
-            cargo: 'Novo (Aguardando)', 
+            cargo: 'Novo (Aguardando)',
             jornadaHHMM: '08:00'
         };
-        
+
         await fb.addDoc(fb.getColl('employees'), data);
         el.innerHTML = `
             <div class="max-w-md mx-auto bg-white p-8 rounded shadow text-center mt-20">
