@@ -1,79 +1,86 @@
-Sistema de Gestão de Ponto e RH v3.0 (Enterprise)
+# RH Enterprise System
 
-Sistema web completo (SPA) para gestão de RH, Ponto Eletrônico e Varejo (Promotores/Lojas).
+Sistema de Gestão de RH e Ponto Eletrônico com Backend em Google Apps Script & Sheets.
 
-Novidades na Versão 3.0
+## 🚀 Funcionalidades
 
-Autocadastro e Link Público: Permite que candidatos ou novos funcionários se cadastrem sozinhos via link dedicado.
+- **Gestão de Colaboradores**: Cadastro completo, edição e controle de acesso.
+- **Ponto Eletrônico (Quiosque)**: Interface simplificada para registro de ponto com **Geolocalização**.
+- **Autocadastro**: Link público para candidatos preencherem seus dados.
+- **Relatórios**: Geração de espelho de ponto com cálculo de horas e observações.
+- **Estrutura**: Gerenciamento de Lojas, Redes, Cargos e Feriados.
+- **Backend Serverless**: Utiliza Google Sheets como banco de dados gratuito e confiável.
 
-Gestão de Varejo: Cadastro de Redes, Lojas e Cargos.
+---
 
-Lógica de Promotores:
+## 🛠️ Instalação e Configuração
 
-Promotor Fixo: Vinculado a apenas uma loja.
+Siga estes passos para configurar o backend (obrigatório).
 
-Promotor Roteirista: Vinculado a múltiplas lojas/redes.
+### 1. Configurar o Banco de Dados (Google Sheets)
 
-Login do Colaborador: Geração automática de credenciais e opção "Manter conectado".
+1.  Crie uma nova planilha no [Google Sheets](https://sheets.new).
+2.  Vá em **Extensões** > **Apps Script**.
+3.  Copie o conteúdo do arquivo `Code.gs` deste projeto e cole no editor do Apps Script.
+4.  Salve o projeto (ícone de disquete).
+5.  Recarregue a página da planilha.
+6.  Um novo menu chamado **RH Enterprise** aparecerá no topo.
+7.  Clique em **RH Enterprise** > **Configurar Banco de Dados**.
+    - Isso criará automaticamente todas as abas necessárias (`employees`, `registros_ponto`, etc.).
 
-Feriados Inteligentes: Cadastro de feriados Nacionais, Estaduais e Municipais. O sistema identifica automaticamente se foi feriado para o colaborador baseado no endereço dele.
+### 2. Implantar a API (Backend)
 
-Upload de Logo: Suporte para envio de arquivo de imagem (armazenado internamente).
+1.  No editor do Apps Script, clique no botão azul **Implantar** (Deploy) > **Nova implantação**.
+2.  Selecione o tipo: **App da Web**.
+3.  Preencha:
+    - **Descrição**: `v1` (ou qualquer nome).
+    - **Executar como**: **Eu** (sua conta Google).
+    - **Quem pode acessar**: **Qualquer pessoa** (Isso é crucial para que o frontend funcione sem login do Google).
+4.  Clique em **Implantar**.
+5.  **Copie a URL do App da Web** gerada (termina em `/exec`).
 
-Instalação e Configuração
+### 3. Conectar o Frontend
 
-1. Configuração do Firebase (Obrigatório)
+1.  Abra o arquivo `js/api.js` no seu editor de código.
+2.  Localize a constante `API_URL` na linha 7.
+3.  Substitua o valor pela URL que você copiou no passo anterior.
 
-Siga os passos padrão para criar um projeto no Firebase Console:
+```javascript
+// Exemplo:
+const API_URL = "https://script.google.com/macros/s/SEU_ID_GIGANTE_AQUI/exec";
+```
 
-Crie um projeto Web.
+---
 
-Ative Authentication (Método Anônimo).
+## 🖥️ Como Usar
 
-Ative Firestore Database (Modo Teste).
+Não é necessário servidor (Node/PHP). O projeto roda diretamente no navegador.
 
-Copie as chaves de configuração.
+1.  Abra o arquivo `index.html` no seu navegador (clique duplo ou use uma extensão como Live Server).
+2.  **Login do Gestor**:
+    - Usuário padrão: `admin`
+    - Senha padrão: `123456`
+    - (Você pode alterar isso na aba `admins` da planilha).
+3.  **Quiosque de Ponto**:
+    - Acesse via menu "Links de Acesso" no painel do gestor ou abra `login-colaborador.html`.
+    - O colaborador usa o usuário/senha cadastrados no perfil dele.
+    - **Nota**: A geolocalização será solicitada ao bater o ponto.
 
-2. Configurando o Arquivo
+---
 
-Abra o arquivo index.html e cole suas credenciais na variável firebaseConfig.
+## 📂 Estrutura de Arquivos
 
-3. Primeiro Acesso (Admin)
+- `index.html`: Painel Administrativo e Autocadastro.
+- `login-colaborador.html`: Interface do Quiosque de Ponto.
+- `js/main.js`: Lógica principal e roteamento.
+- `js/api.js`: Adaptador de comunicação com o Google Apps Script.
+- `js/renders/`: Módulos de interface (Admin, Kiosk, Autocadastro).
+- `Code.gs`: Código do backend (deve estar no Apps Script).
 
-Acesse o sistema. Se for a primeira vez, use:
+---
 
-Usuário: admin
+## ⚠️ Requisitos
 
-Senha: 123456
-
-Vá em Configurações > Estrutura para cadastrar:
-
-Estados atendidos.
-
-Cargos (Ex: Promotor Fixo, Promotor Roteirista).
-
-Redes e Lojas.
-
-Feriados.
-
-4. Links Disponíveis
-
-No menu lateral, clique em Links de Acesso para obter:
-
-Link do Ponto: Para o funcionário bater ponto (requer login gerado no cadastro).
-
-Link de Autocadastro: Para novos colaboradores preencherem seus dados iniciais.
-
-Estrutura de Dados e Regras
-
-Imagens: O logo é convertido para Base64. Recomenda-se usar imagens pequenas (png/jpg) abaixo de 100KB para não sobrecarregar o banco de dados.
-
-Feriados: Ao gerar o relatório, o sistema verifica: Feriados Nacionais + Feriados do Estado do Colaborador + Feriados do Município do Colaborador.
-
-Ocorrências: No relatório, clique em qualquer dia para adicionar justificativas (Atestado, Folga, etc).
-
-Requisitos
-
-Navegador moderno.
-
-Conexão com internet.
+- Navegador moderno (Chrome, Edge, Firefox).
+- Conexão com a internet (para acessar o Google Sheets).
+- Permissão de localização ativada para o registro de ponto.
